@@ -23,18 +23,21 @@ def _get_photos_roots() -> list[Path]:
 
 
 def _get_all_albums() -> list[tuple[Path, str]]:
-    """Recursively find all folders containing images. Returns (path, relative_label)."""
+    """Recursively find all folders containing images. Returns (path, relative_label).
+    Only returns leaf directories (no children with photos) to keep the list clean."""
     extensions = {".jpg", ".jpeg", ".png", ".tiff", ".tif"}
+    skip_dirs = {"@eaDir", "#recycle", ".git"}
     albums = []
     for root in _get_photos_roots():
         if not root.exists():
             continue
         for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in skip_dirs]
             dirpath = Path(dirpath)
             has_photos = any(
                 Path(f).suffix.lower() in extensions for f in filenames
             )
-            if has_photos:
+            if has_photos and dirpath != root:
                 rel = dirpath.relative_to(root)
                 albums.append((dirpath, str(rel)))
     albums.sort(key=lambda x: x[1])

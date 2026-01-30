@@ -1,7 +1,7 @@
 from datetime import date
 from pathlib import Path
 
-import anthropic
+import openai
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -97,7 +97,7 @@ def analyze(
 
     # Analyze with Claude
     console.print("Foto's analyseren met AI...\n")
-    client = anthropic.Anthropic()
+    client = openai.OpenAI()
     photos = analyze_album(photos, context, client)
 
     # Show results

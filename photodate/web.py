@@ -2,7 +2,7 @@ import os
 from datetime import date
 from pathlib import Path
 
-import anthropic
+import openai
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -79,7 +79,7 @@ async def analyze_folder(request: Request, folder_name: str, context: str = Form
         return HTMLResponse("Map niet gevonden", status_code=404)
 
     photos = _load_photos(folder)
-    client = anthropic.Anthropic()
+    client = openai.OpenAI()
     photos = analyze_album(photos, context, client)
 
     return templates.TemplateResponse("results.html", {

@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Corrigeer datums van ingescande foto's met AI"
 requires-python = ">=3.10"
 dependencies = [
-    "anthropic>=0.39.0",
+    "openai>=1.0.0",
     "typer>=0.9.0",
     "piexif>=1.1.3",
     "Pillow>=10.0.0",

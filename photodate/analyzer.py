@@ -3,7 +3,7 @@ import json
 from datetime import date
 from io import BytesIO
 
-import anthropic
+import openai
 from PIL import Image
 
 from .models import DateEstimate, PhotoInfo
@@ -53,18 +53,18 @@ Antwoord in JSON (geen markdown codeblock):
 def analyze_batch(
     photos: list[PhotoInfo],
     album_context: str,
-    client: anthropic.Anthropic,
+    client: openai.OpenAI,
     start_offset: int = 0,
     total: int = 0,
 ) -> list[DateEstimate]:
-    """Send a batch of photos to Claude for date estimation."""
+    """Send a batch of photos to OpenAI for date estimation."""
     content: list[dict] = []
 
     for photo in photos:
         b64, media_type = _resize_and_encode(photo.path)
         content.append({
-            "type": "image",
-            "source": {"type": "base64", "media_type": media_type, "data": b64},
+            "type": "image_url",
+            "image_url": {"url": f"data:{media_type};base64,{b64}"},
         })
         content.append({
             "type": "text",
@@ -79,13 +79,13 @@ def analyze_batch(
     )
     content.append({"type": "text", "text": prompt})
 
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
+    response = client.chat.completions.create(
+        model="gpt-4o",
         max_tokens=4096,
         messages=[{"role": "user", "content": content}],
     )
 
-    response_text = response.content[0].text
+    response_text = response.choices[0].message.content
     # Strip markdown code fences if present
     if response_text.startswith("```"):
         lines = response_text.split("\n")
@@ -107,7 +107,7 @@ def analyze_batch(
 def analyze_album(
     photos: list[PhotoInfo],
     album_context: str,
-    client: anthropic.Anthropic,
+    client: openai.OpenAI,
 ) -> list[PhotoInfo]:
     """Analyze all photos in an album in batches."""
     total = len(photos)

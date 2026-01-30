@@ -8,7 +8,7 @@ services:
     ports:
       - "8920:8000"
     environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
       - PHOTOS_PATH=/photos
     volumes:
       - /volume1/photos:/photos  # Pas aan naar je Synology pad

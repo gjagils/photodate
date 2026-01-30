@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Datums aanpassen</h1>
+<p style="color: #aaa; margin-bottom: 1.5rem;">Album: {{ album_rel }}</p>
+
+<form method="post" action="/album/{{ album_rel }}/apply">
+    <table>
+        <tr>
+            <th style="width: 160px;">Foto</th>
+            <th>Bestand</th>
+            <th>Huidige EXIF</th>
+            <th>Voorgestelde datum</th>
+            <th>Zekerheid</th>
+            <th>Redenering</th>
+        </tr>
+        {% for photo in photos %}
+        {% set fname = photo.path.name %}
+        <tr>
+            <td>
+                <img src="/thumb/{{ album_rel }}/__file__/{{ fname }}?size=120"
+                     style="width: 120px; height: 80px; object-fit: cover; border-radius: 4px;">
+            </td>
+            <td>{{ fname }}</td>
+            <td style="color: #888;">{{ photo.original_exif_date or "-" }}</td>
+            <td>
+                <input type="date" name="date_{{ fname }}"
+                       value="{{ album_data.photo_dates.get(fname, '') }}"
+                       style="width: 160px;">
+            </td>
+            <td>
+                {% set conf = album_data.photo_confidence.get(fname, '') %}
+                <span class="confidence-{{ conf }}">{{ conf }}</span>
+            </td>
+            <td style="font-size: 0.85rem; color: #aaa;">
+                {{ album_data.photo_reasoning.get(fname, '-') }}
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+
+    <div class="actions">
+        <button type="submit">Alle datums toepassen</button>
+        <a href="/album/{{ album_rel }}" class="btn btn-secondary">Terug naar context</a>
+    </div>
+</form>
+{% endblock %}

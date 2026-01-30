@@ -1,50 +1,74 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Resultaten: {{ folder_name }}</h1>
-<p style="color: #aaa; margin-bottom: 1rem;">Context: {{ context }}</p>
+<h1>Analyseresultaten</h1>
+<p style="color: #aaa; margin-bottom: 1.5rem;">Album: {{ album_rel }}</p>
 
-<form method="post" action="/apply">
-    <input type="hidden" name="folder_name" value="{{ folder_name }}">
+{% if face_clusters %}
+<div class="card">
+    <h2>Gedetecteerde personen</h2>
+    <p style="color: #aaa; margin-bottom: 1rem;">
+        De volgende gezichten zijn herkend. Geef namen op zodat de AI verjaardagen kan meenemen.
+    </p>
 
-    <table>
-        <tr>
-            <th>#</th>
-            <th>Bestand</th>
-            <th>Huidige datum</th>
-            <th>Geschatte datum</th>
-            <th>Zekerheid</th>
-            <th>Redenering</th>
-        </tr>
-        {% for photo in photos %}
-        <tr>
-            <td>{{ photo.index + 1 }}</td>
-            <td>{{ photo.path.name }}</td>
-            <td style="color: #aaa;">{{ photo.original_exif_date or "-" }}</td>
-            <td>
-                {% if photo.estimate %}
-                <input type="hidden" name="path_{{ photo.index }}" value="{{ photo.path }}">
-                <input type="date" name="date_{{ photo.index }}" value="{{ photo.estimate.date.isoformat() }}">
-                {% else %}
-                -
-                {% endif %}
-            </td>
-            <td>
-                {% if photo.estimate %}
-                <span class="confidence-{{ photo.estimate.confidence }}">
-                    {{ photo.estimate.confidence }}
-                </span>
-                {% endif %}
-            </td>
-            <td style="font-size: 0.85rem; color: #aaa;">
-                {{ photo.estimate.reasoning if photo.estimate else "-" }}
-            </td>
-        </tr>
+    <form method="post" action="/album/{{ album_rel }}/faces">
+        {% for cluster in face_clusters %}
+        <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; padding: 0.8rem; background: #1a1a2e; border-radius: 6px;">
+            <div style="display: flex; gap: 0.3rem;">
+                {% for crop in cluster.sample_crops %}
+                <img src="data:image/jpeg;base64,{{ crop }}" style="width: 60px; height: 60px; border-radius: 50%; object-fit: cover;">
+                {% endfor %}
+            </div>
+            <div style="flex: 1;">
+                <p style="font-size: 0.85em; color: #aaa;">Verschijnt op {{ cluster.count }} foto('s)</p>
+                <input type="text" name="face_label_{{ cluster.id }}"
+                       value="{{ album_data.face_labels.get(cluster.id, '') }}"
+                       placeholder="Naam van deze persoon">
+            </div>
+        </div>
         {% endfor %}
-    </table>
 
-    <div class="actions">
-        <button type="submit">Datums toepassen</button>
-        <a href="/validate/{{ folder_name }}" class="btn" style="background: #0f3460;">Terug</a>
+        <button type="submit">Opslaan en door naar datums</button>
+    </form>
+</div>
+{% endif %}
+
+<div class="card">
+    <h2>Datumschattingen per foto</h2>
+
+    {% set ns = namespace(current_group=-1) %}
+    <div class="photo-grid">
+    {% for photo in photos %}
+        {% set fname = photo.path.name %}
+        {% set group = album_data.photo_groups.get(fname, 0) %}
+
+        {% if group != ns.current_group %}
+            {% set ns.current_group = group %}
+            </div>
+            <div class="group-header">
+                <strong>Groep {{ group }}</strong>
+                — {{ album_data.photo_reasoning.get(fname, '')[:80] }}
+            </div>
+            <div class="photo-grid">
+        {% endif %}
+
+        <div class="photo-card">
+            <img src="/thumb/{{ album_rel }}/__file__/{{ fname }}?size=200" alt="{{ fname }}">
+            <div class="info">
+                <p><strong>{{ fname }}</strong></p>
+                <p>
+                    {% set conf = album_data.photo_confidence.get(fname, '') %}
+                    <span class="confidence-{{ conf }}">{{ album_data.photo_dates.get(fname, '-') }}</span>
+                    ({{ conf }})
+                </p>
+                <p style="color: #888; font-size: 0.8em;">{{ album_data.photo_reasoning.get(fname, '') }}</p>
+            </div>
+        </div>
+    {% endfor %}
     </div>
-</form>
+
+    <div class="actions" style="margin-top: 1.5rem;">
+        <a href="/album/{{ album_rel }}/dates" class="btn">Datums bekijken en aanpassen</a>
+        <a href="/album/{{ album_rel }}" class="btn btn-secondary">Terug naar context</a>
+    </div>
+</div>
 {% endblock %}

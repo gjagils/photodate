@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Instellingen</h1>
+
+{% if saved %}
+<div class="alert alert-success">Instellingen opgeslagen.</div>
+{% endif %}
+
+<div class="card">
+    <h2>Familieleden</h2>
+    <p style="color: #aaa; margin-bottom: 1rem;">
+        Voeg familieleden toe zodat de AI verjaardagen en leeftijden kan herkennen.
+    </p>
+
+    <form method="post" action="/settings">
+        <div id="members">
+            {% for member in settings.family_members %}
+            <div class="milestone-row" data-idx="{{ loop.index0 }}">
+                <div style="flex:2">
+                    <label>Naam</label>
+                    <input type="text" name="name_{{ loop.index0 }}" value="{{ member.name }}" placeholder="Voornaam Achternaam">
+                </div>
+                <div style="flex:1">
+                    <label>Geboortedatum</label>
+                    <input type="date" name="birthdate_{{ loop.index0 }}" value="{{ member.birthdate }}">
+                </div>
+                <div style="flex:2">
+                    <label>Opmerking</label>
+                    <input type="text" name="notes_{{ loop.index0 }}" value="{{ member.notes }}" placeholder="bijv. draagt bril, rood haar">
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="actions">
+            <button type="button" onclick="addMember()">+ Familielid toevoegen</button>
+            <button type="submit">Opslaan</button>
+        </div>
+    </form>
+</div>
+
+<script>
+let memberCount = {{ settings.family_members | length }};
+function addMember() {
+    const div = document.createElement('div');
+    div.className = 'milestone-row';
+    div.innerHTML = `
+        <div style="flex:2">
+            <label>Naam</label>
+            <input type="text" name="name_${memberCount}" placeholder="Voornaam Achternaam">
+        </div>
+        <div style="flex:1">
+            <label>Geboortedatum</label>
+            <input type="date" name="birthdate_${memberCount}">
+        </div>
+        <div style="flex:2">
+            <label>Opmerking</label>
+            <input type="text" name="notes_${memberCount}" placeholder="bijv. draagt bril, rood haar">
+        </div>
+    `;
+    document.getElementById('members').appendChild(div);
+    memberCount++;
+}
+</script>
+{% endblock %}

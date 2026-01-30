@@ -11,6 +11,8 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - PHOTOS_PATHS=${PHOTOS_PATHS}
     volumes:
+      # Data volume voor instellingen en albumdata (bewaar dit!)
+      - ./data:/data
       # Mount hier je fotopaden. Elk pad uit PHOTOS_PATHS moet
       # als volume gemount worden. Formaat: /pad/op/synology:/pad/op/synology
       - /volume1/photos:/volume1/photos

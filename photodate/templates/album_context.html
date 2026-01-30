@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ folder_name }}</h1>
+<p style="color: #aaa; margin-bottom: 1rem;">{{ photo_count }} foto's in dit album</p>
+
+{% if saved %}
+<div class="alert alert-success">Context opgeslagen.</div>
+{% endif %}
+
+<form method="post" action="/album/{{ album_rel }}/save">
+    <div class="card">
+        <h2>Albumperiode</h2>
+        <div style="display: flex; gap: 1rem;">
+            <div style="flex: 1;">
+                <label>Startdatum</label>
+                <input type="date" name="start_date" value="{{ album_data.start_date }}">
+            </div>
+            <div style="flex: 1;">
+                <label>Einddatum</label>
+                <input type="date" name="end_date" value="{{ album_data.end_date }}">
+            </div>
+        </div>
+
+        <label>Extra context / beschrijving</label>
+        <textarea name="context_notes" placeholder="bijv. Vakantie naar Spanje, camping bij Barcelona. Papa had net een nieuwe auto.">{{ album_data.context_notes }}</textarea>
+    </div>
+
+    <div class="card">
+        <h2>IJkpunten</h2>
+        <p style="color: #aaa; margin-bottom: 1rem;">
+            Ken je de exacte datum van een foto? Voeg het toe als ijkpunt.
+            De AI gebruikt dit om andere datums nauwkeuriger te schatten.
+        </p>
+
+        <div id="milestones">
+            {% for ms in album_data.milestones %}
+            <div class="milestone-row">
+                <div>
+                    <label>Foto #</label>
+                    <input type="number" name="ms_photo_{{ loop.index0 }}" value="{{ ms.photo_index }}" min="1" max="{{ photo_count }}" style="width: 80px;">
+                </div>
+                <div style="flex: 1;">
+                    <label>Datum</label>
+                    <input type="date" name="ms_date_{{ loop.index0 }}" value="{{ ms.date }}">
+                </div>
+                <div style="flex: 2;">
+                    <label>Beschrijving</label>
+                    <input type="text" name="ms_desc_{{ loop.index0 }}" value="{{ ms.description }}" placeholder="bijv. Verjaardag papa">
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <button type="button" onclick="addMilestone()" style="margin-top: 0.5rem;" class="btn-secondary btn">+ IJkpunt toevoegen</button>
+    </div>
+
+    <div class="actions">
+        <button type="submit" class="btn-secondary">Context opslaan</button>
+    </div>
+</form>
+
+<form method="post" action="/album/{{ album_rel }}/analyze">
+    <div class="card">
+        <h2>Analyseren</h2>
+        <p style="color: #aaa; margin-bottom: 1rem;">
+            Start de AI-analyse. Dit scant alle foto's, detecteert gezichten, en schat datums.
+            Dit kan even duren bij grote albums.
+        </p>
+        <button type="submit" onclick="this.disabled=true; this.textContent='Bezig met analyseren...'; this.form.submit();">
+            Analyseer dit album
+        </button>
+    </div>
+</form>
+
+<script>
+let msCount = {{ album_data.milestones | length }};
+function addMilestone() {
+    const div = document.createElement('div');
+    div.className = 'milestone-row';
+    div.innerHTML = `
+        <div>
+            <label>Foto #</label>
+            <input type="number" name="ms_photo_${msCount}" min="1" max="{{ photo_count }}" style="width: 80px;">
+        </div>
+        <div style="flex: 1;">
+            <label>Datum</label>
+            <input type="date" name="ms_date_${msCount}">
+        </div>
+        <div style="flex: 2;">
+            <label>Beschrijving</label>
+            <input type="text" name="ms_desc_${msCount}" placeholder="bijv. Verjaardag papa">
+        </div>
+    `;
+    document.getElementById('milestones').appendChild(div);
+    msCount++;
+}
+</script>
+{% endblock %}

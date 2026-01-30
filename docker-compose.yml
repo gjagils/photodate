@@ -1,0 +1,14 @@
+services:
+  photodate:
+    build: .
+    # Of gebruik een image van GHCR voor auto-updates:
+    # image: ghcr.io/JOUW_GEBRUIKER/photodate:latest
+    container_name: photodate
+    restart: unless-stopped
+    ports:
+      - "8920:8000"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - PHOTOS_PATH=/photos
+    volumes:
+      - /volume1/photos:/photos  # Pas aan naar je Synology pad

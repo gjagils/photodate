@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Resultaten: {{ folder_name }}</h1>
+<p style="color: #aaa; margin-bottom: 1rem;">Context: {{ context }}</p>
+
+<form method="post" action="/apply">
+    <input type="hidden" name="folder_name" value="{{ folder_name }}">
+
+    <table>
+        <tr>
+            <th>#</th>
+            <th>Bestand</th>
+            <th>Huidige datum</th>
+            <th>Geschatte datum</th>
+            <th>Zekerheid</th>
+            <th>Redenering</th>
+        </tr>
+        {% for photo in photos %}
+        <tr>
+            <td>{{ photo.index + 1 }}</td>
+            <td>{{ photo.path.name }}</td>
+            <td style="color: #aaa;">{{ photo.original_exif_date or "-" }}</td>
+            <td>
+                {% if photo.estimate %}
+                <input type="hidden" name="path_{{ photo.index }}" value="{{ photo.path }}">
+                <input type="date" name="date_{{ photo.index }}" value="{{ photo.estimate.date.isoformat() }}">
+                {% else %}
+                -
+                {% endif %}
+            </td>
+            <td>
+                {% if photo.estimate %}
+                <span class="confidence-{{ photo.estimate.confidence }}">
+                    {{ photo.estimate.confidence }}
+                </span>
+                {% endif %}
+            </td>
+            <td style="font-size: 0.85rem; color: #aaa;">
+                {{ photo.estimate.reasoning if photo.estimate else "-" }}
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+
+    <div class="actions">
+        <button type="submit">Datums toepassen</button>
+        <a href="/validate/{{ folder_name }}" class="btn" style="background: #0f3460;">Terug</a>
+    </div>
+</form>
+{% endblock %}

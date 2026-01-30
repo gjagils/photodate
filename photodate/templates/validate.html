@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ folder_name }}</h1>
+
+<div class="card">
+    <h2>Validatie</h2>
+    {% set issues_count = photos | selectattr("issues") | list | length %}
+
+    {% set has_issues = [] %}
+    {% for photo in photos if photo.issues %}
+        {% if has_issues.append(1) %}{% endif %}
+    {% endfor %}
+
+    {% if not has_issues %}
+        <p class="success">Geen problemen gevonden!</p>
+    {% else %}
+        <table>
+            <tr><th>#</th><th>Bestand</th><th>EXIF datum</th><th>Problemen</th></tr>
+            {% for photo in photos if photo.issues %}
+            <tr>
+                <td>{{ photo.index + 1 }}</td>
+                <td>{{ photo.path.name }}</td>
+                <td>{{ photo.original_exif_date or "-" }}</td>
+                <td>
+                    {% for issue in photo.issues %}
+                    <span class="{{ 'error' if issue.severity == 'error' else 'warning' }}">
+                        {{ issue.description }}
+                    </span><br>
+                    {% endfor %}
+                </td>
+            </tr>
+            {% endfor %}
+        </table>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>AI-analyse</h2>
+    <p style="color: #aaa; margin-bottom: 1rem;">Geef context over dit album zodat de AI betere schattingen kan maken.</p>
+    <form method="post" action="/analyze/{{ folder_name }}">
+        <textarea name="context" rows="3" placeholder="Bijv: Vakantie naar Spanje, zomer 1987. Foto's van het gezin Van der Berg."></textarea>
+        <br><br>
+        <button type="submit">Analyseren met AI</button>
+    </form>
+</div>
+{% endblock %}

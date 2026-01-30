@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>📷 Photodate</h1>
+<p style="margin-bottom: 1.5rem; color: #aaa;">Corrigeer datums van ingescande foto's met AI</p>
+
+<div class="card">
+    <h2>Fotoalbums</h2>
+    <p style="color: #aaa; margin-bottom: 1rem;">Mappen in: {{ photos_root }}</p>
+    <div class="folder-list">
+        {% for folder in folders %}
+        <a href="/validate/{{ folder.name }}">{{ folder.name }}</a>
+        {% else %}
+        <p style="color: #aaa;">Geen mappen met foto's gevonden in {{ photos_root }}</p>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

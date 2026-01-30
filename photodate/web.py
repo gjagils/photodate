@@ -22,28 +22,29 @@ def _get_photos_roots() -> list[Path]:
     return [Path(p.strip()) for p in raw.split(",") if p.strip()]
 
 
-def _get_all_albums() -> list[Path]:
-    """List all subfolders containing images across all photo roots."""
+def _get_all_albums() -> list[tuple[Path, str]]:
+    """Recursively find all folders containing images. Returns (path, relative_label)."""
     extensions = {".jpg", ".jpeg", ".png", ".tiff", ".tif"}
-    folders = []
+    albums = []
     for root in _get_photos_roots():
         if not root.exists():
             continue
-        for d in sorted(root.iterdir()):
-            if d.is_dir():
-                has_photos = any(
-                    f.suffix.lower() in extensions
-                    for f in d.iterdir() if f.is_file()
-                )
-                if has_photos:
-                    folders.append(d)
-    return folders
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirpath = Path(dirpath)
+            has_photos = any(
+                Path(f).suffix.lower() in extensions for f in filenames
+            )
+            if has_photos:
+                rel = dirpath.relative_to(root)
+                albums.append((dirpath, str(rel)))
+    albums.sort(key=lambda x: x[1])
+    return albums
 
 
-def _find_album(folder_name: str) -> Path | None:
-    """Find an album folder by name across all photo roots."""
+def _find_album(album_rel: str) -> Path | None:
+    """Find an album folder by relative path across all photo roots."""
     for root in _get_photos_roots():
-        candidate = root / folder_name
+        candidate = root / album_rel
         if candidate.is_dir():
             return candidate
     return None
@@ -72,7 +73,7 @@ async def index(request: Request):
     })
 
 
-@app.get("/validate/{folder_name}", response_class=HTMLResponse)
+@app.get("/validate/{folder_name:path}", response_class=HTMLResponse)
 async def validate_folder(request: Request, folder_name: str):
     folder = _find_album(folder_name)
     if not folder:
@@ -86,7 +87,7 @@ async def validate_folder(request: Request, folder_name: str):
     })
 
 
-@app.post("/analyze/{folder_name}", response_class=HTMLResponse)
+@app.post("/analyze/{folder_name:path}", response_class=HTMLResponse)
 async def analyze_folder(request: Request, folder_name: str, context: str = Form(...)):
     folder = _find_album(folder_name)
     if not folder:

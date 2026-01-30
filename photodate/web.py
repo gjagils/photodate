@@ -16,24 +16,37 @@ from .validator import scan_and_validate
 app = FastAPI(title="Photodate")
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
-PHOTOS_ROOT = Path(os.environ.get("PHOTOS_PATH", "/photos"))
+def _get_photos_roots() -> list[Path]:
+    """Parse PHOTOS_PATHS env var into a list of Paths."""
+    raw = os.environ.get("PHOTOS_PATHS", os.environ.get("PHOTOS_PATH", "/photos"))
+    return [Path(p.strip()) for p in raw.split(",") if p.strip()]
 
 
-def _get_subfolders(root: Path) -> list[Path]:
-    """List subfolders that contain images."""
+def _get_all_albums() -> list[Path]:
+    """List all subfolders containing images across all photo roots."""
     extensions = {".jpg", ".jpeg", ".png", ".tiff", ".tif"}
     folders = []
-    if not root.exists():
-        return folders
-    for d in sorted(root.iterdir()):
-        if d.is_dir():
-            has_photos = any(
-                f.suffix.lower() in extensions
-                for f in d.iterdir() if f.is_file()
-            )
-            if has_photos:
-                folders.append(d)
+    for root in _get_photos_roots():
+        if not root.exists():
+            continue
+        for d in sorted(root.iterdir()):
+            if d.is_dir():
+                has_photos = any(
+                    f.suffix.lower() in extensions
+                    for f in d.iterdir() if f.is_file()
+                )
+                if has_photos:
+                    folders.append(d)
     return folders
+
+
+def _find_album(folder_name: str) -> Path | None:
+    """Find an album folder by name across all photo roots."""
+    for root in _get_photos_roots():
+        candidate = root / folder_name
+        if candidate.is_dir():
+            return candidate
+    return None
 
 
 def _load_photos(folder: Path) -> list[PhotoInfo]:
@@ -50,18 +63,19 @@ def _load_photos(folder: Path) -> list[PhotoInfo]:
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    folders = _get_subfolders(PHOTOS_ROOT)
+    folders = _get_all_albums()
+    roots = _get_photos_roots()
     return templates.TemplateResponse("index.html", {
         "request": request,
         "folders": folders,
-        "photos_root": PHOTOS_ROOT,
+        "photos_roots": roots,
     })
 
 
 @app.get("/validate/{folder_name}", response_class=HTMLResponse)
 async def validate_folder(request: Request, folder_name: str):
-    folder = PHOTOS_ROOT / folder_name
-    if not folder.is_dir():
+    folder = _find_album(folder_name)
+    if not folder:
         return HTMLResponse("Map niet gevonden", status_code=404)
 
     photos = scan_and_validate(folder)
@@ -74,8 +88,8 @@ async def validate_folder(request: Request, folder_name: str):
 
 @app.post("/analyze/{folder_name}", response_class=HTMLResponse)
 async def analyze_folder(request: Request, folder_name: str, context: str = Form(...)):
-    folder = PHOTOS_ROOT / folder_name
-    if not folder.is_dir():
+    folder = _find_album(folder_name)
+    if not folder:
         return HTMLResponse("Map niet gevonden", status_code=404)
 
     photos = _load_photos(folder)

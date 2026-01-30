@@ -5,12 +5,15 @@
 
 <div class="card">
     <h2>Fotoalbums</h2>
-    <p style="color: #aaa; margin-bottom: 1rem;">Mappen in: {{ photos_root }}</p>
+    <p style="color: #aaa; margin-bottom: 1rem;">Bronnen: {{ photos_roots | join(', ') }}</p>
     <div class="folder-list">
         {% for folder in folders %}
-        <a href="/validate/{{ folder.name }}">{{ folder.name }}</a>
+        <a href="/validate/{{ folder.name }}">
+            {{ folder.name }}
+            <span style="font-size: 0.8em; color: #666;">{{ folder.parent }}</span>
+        </a>
         {% else %}
-        <p style="color: #aaa;">Geen mappen met foto's gevonden in {{ photos_root }}</p>
+        <p style="color: #aaa;">Geen mappen met foto's gevonden.</p>
         {% endfor %}
     </div>
 </div>

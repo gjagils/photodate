@@ -9,6 +9,11 @@ services:
       - "8920:8000"
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - PHOTOS_PATH=/photos
+      - PHOTOS_PATHS=${PHOTOS_PATHS}
     volumes:
-      - /volume1/photos:/photos  # Pas aan naar je Synology pad
+      # Mount hier je fotopaden. Elk pad uit PHOTOS_PATHS moet
+      # als volume gemount worden. Formaat: /pad/op/synology:/pad/op/synology
+      - /volume1/photos:/volume1/photos
+      # Voeg extra paden toe als je meerdere bronnen hebt:
+      # - /volume2/scans:/volume2/scans
+      # - /volume1/homes/jan/Photos:/volume1/homes/jan/Photos

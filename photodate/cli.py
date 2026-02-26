@@ -6,7 +6,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from .analyzer import analyze_album
+from .analyzer import analyze_album_full
 from .exif import parse_exif_date, read_exif_date, write_exif_date
 from .models import PhotoInfo
 from .validator import scan_and_validate

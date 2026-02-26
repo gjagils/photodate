@@ -10,12 +10,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     liblapack-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+# Copy all source files first, then install
 COPY pyproject.toml .
-RUN pip install --no-cache-dir .
-
-# Copy application code
 COPY photodate/ photodate/
+RUN pip install --no-cache-dir .
 
 # Data volume for settings and album data
 VOLUME /data

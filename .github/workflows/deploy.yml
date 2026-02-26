@@ -1,0 +1,55 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/photodate:latest
+            ghcr.io/${{ github.repository_owner }}/photodate:${{ github.sha }}
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+
+      - name: Redeploy Portainer stack
+        run: |
+          response=$(curl -s -w "\n%{http_code}" -X PUT \
+            -H "X-API-Key: ${{ secrets.PORTAINER_API_TOKEN }}" \
+            "${{ secrets.PORTAINER_URL }}/api/stacks/${{ secrets.PORTAINER_STACK_ID }}/git/redeploy?endpointId=${{ secrets.PORTAINER_ENDPOINT_ID }}" \
+            -H "Content-Type: application/json" \
+            -d '{"pullImage": true, "prune": false}')
+
+          http_code=$(echo "$response" | tail -1)
+          body=$(echo "$response" | head -1)
+
+          echo "HTTP $http_code: $body"
+
+          if [ "$http_code" -ge 400 ]; then
+            echo "::warning::Portainer redeploy returned HTTP $http_code - you may need to manually pull the new image"
+          fi

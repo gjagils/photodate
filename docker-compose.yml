@@ -1,8 +1,6 @@
 services:
   photodate:
-    build: .
-    # Of gebruik een image van GHCR voor auto-updates:
-    # image: ghcr.io/JOUW_GEBRUIKER/photodate:latest
+    image: ghcr.io/gjagils/photodate:latest
     container_name: photodate
     restart: unless-stopped
     ports:
@@ -12,10 +10,13 @@ services:
       - PHOTOS_PATHS=${PHOTOS_PATHS}
     volumes:
       # Data volume voor instellingen en albumdata (bewaar dit!)
-      - ./data:/data
+      - photodate-data:/data
       # Mount hier je fotopaden. Elk pad uit PHOTOS_PATHS moet
       # als volume gemount worden. Formaat: /pad/op/synology:/pad/op/synology
       - /volume1/photos:/volume1/photos
       # Voeg extra paden toe als je meerdere bronnen hebt:
       # - /volume2/scans:/volume2/scans
       # - /volume1/homes/jan/Photos:/volume1/homes/jan/Photos
+
+volumes:
+  photodate-data:

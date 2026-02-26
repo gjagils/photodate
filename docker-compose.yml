@@ -7,7 +7,7 @@ services:
       - "8920:8000"
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - PHOTOS_PATHS=${PHOTOS_PATHS}
+      - PHOTOS_PATHS=/volume1/homes/gjagils/Photos
     volumes:
       # Data volume voor instellingen en albumdata (bewaar dit!)
       - photodate-data:/data

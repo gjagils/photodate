@@ -1,8 +1,24 @@
 __pycache__/
 *.pyc
-.env
 *.egg-info/
 dist/
 build/
 *.bak
 data/
+
+# Environment & secrets
+.env
+stack.env
+
+# IDE
+.vscode/
+.idea/
+
+# Virtual environment
+.venv/
+venv/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/

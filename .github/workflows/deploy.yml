@@ -37,19 +37,35 @@ jobs:
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
 
-      - name: Redeploy Portainer stack
+      - name: Update Portainer stack
         run: |
+          COMPOSE_CONTENT=$(cat docker-compose.yml)
+
+          PAYLOAD=$(jq -n \
+            --arg content "$COMPOSE_CONTENT" \
+            --arg openai_key "${{ secrets.OPENAI_API_KEY }}" \
+            '{
+              stackFileContent: $content,
+              env: [
+                { name: "OPENAI_API_KEY", value: $openai_key }
+              ],
+              prune: true,
+              pullImage: true
+            }')
+
           response=$(curl -s -w "\n%{http_code}" -X PUT \
             -H "X-API-Key: ${{ secrets.PORTAINER_API_TOKEN }}" \
-            "${{ secrets.PORTAINER_URL }}/api/stacks/${{ secrets.PORTAINER_STACK_ID }}/git/redeploy?endpointId=${{ secrets.PORTAINER_ENDPOINT_ID }}" \
             -H "Content-Type: application/json" \
-            -d '{"pullImage": true, "prune": false}')
+            "${{ secrets.PORTAINER_URL }}/api/stacks/${{ secrets.PORTAINER_STACK_ID }}?endpointId=${{ secrets.PORTAINER_ENDPOINT_ID }}" \
+            -d "$PAYLOAD")
 
           http_code=$(echo "$response" | tail -1)
-          body=$(echo "$response" | head -1)
+          body=$(echo "$response" | sed '$d')
 
-          echo "HTTP $http_code: $body"
+          echo "HTTP $http_code"
+          echo "$body"
 
           if [ "$http_code" -ge 400 ]; then
-            echo "::warning::Portainer redeploy returned HTTP $http_code - you may need to manually pull the new image"
+            echo "::error::Portainer stack update failed with HTTP $http_code"
+            exit 1
           fi

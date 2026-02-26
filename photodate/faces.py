@@ -4,9 +4,14 @@ from collections import defaultdict
 from io import BytesIO
 from pathlib import Path
 
-import face_recognition
 import numpy as np
 from PIL import Image
+
+try:
+    import face_recognition
+    FACE_RECOGNITION_AVAILABLE = True
+except (ImportError, OSError):
+    FACE_RECOGNITION_AVAILABLE = False
 
 # Tolerance for face matching (lower = stricter)
 FACE_TOLERANCE = 0.6
@@ -41,6 +46,9 @@ def detect_faces_in_album(photo_paths: list[Path]) -> dict:
             }
         }
     """
+    if not FACE_RECOGNITION_AVAILABLE:
+        return {"clusters": [], "per_photo": {}}
+
     all_encodings: list[tuple[int, np.ndarray, tuple[int, int, int, int]]] = []
 
     # Step 1: Detect faces in each photo

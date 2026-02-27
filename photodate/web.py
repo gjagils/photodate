@@ -128,56 +128,20 @@ async def settings_save(request: Request):
     })
 
 
-# --- Page: Album context (step 1) ---
+# --- Page: Date review (step 3) --- (must be before catch-all album route)
 
-@app.get("/album/{album_rel:path}", response_class=HTMLResponse)
-async def album_context_page(request: Request, album_rel: str):
+@app.get("/album/{album_rel:path}/dates", response_class=HTMLResponse)
+async def date_review_page(request: Request, album_rel: str):
     folder = _find_album(album_rel)
     if not folder:
         return HTMLResponse("Map niet gevonden", status_code=404)
-    album_data = AlbumData.load(album_rel)
     photos = _load_photos(folder)
-    return templates.TemplateResponse("album_context.html", {
-        "request": request,
-        "album_rel": album_rel,
-        "album_data": album_data,
-        "photo_count": len(photos),
-        "folder_name": folder.name,
-    })
-
-
-@app.post("/album/{album_rel:path}/save", response_class=HTMLResponse)
-async def album_context_save(request: Request, album_rel: str):
-    form = await request.form()
     album_data = AlbumData.load(album_rel)
-    album_data.start_date = form.get("start_date", "").strip()
-    album_data.end_date = form.get("end_date", "").strip()
-    album_data.context_notes = form.get("context_notes", "").strip()
-
-    # Parse milestones
-    milestones = []
-    i = 0
-    while f"ms_photo_{i}" in form:
-        photo_idx = form.get(f"ms_photo_{i}", "").strip()
-        ms_date = form.get(f"ms_date_{i}", "").strip()
-        ms_desc = form.get(f"ms_desc_{i}", "").strip()
-        if photo_idx and ms_date and ms_desc:
-            milestones.append(Milestone(
-                photo_index=int(photo_idx),
-                date=ms_date,
-                description=ms_desc,
-            ))
-        i += 1
-    album_data.milestones = milestones
-    album_data.save()
-
-    return templates.TemplateResponse("album_context.html", {
+    return templates.TemplateResponse("dates.html", {
         "request": request,
         "album_rel": album_rel,
+        "photos": photos,
         "album_data": album_data,
-        "photo_count": len(_load_photos(_find_album(album_rel))),
-        "folder_name": _find_album(album_rel).name,
-        "saved": True,
     })
 
 
@@ -249,20 +213,38 @@ async def save_face_labels(request: Request, album_rel: str):
     })
 
 
-# --- Page: Date review (step 3) ---
-
-@app.get("/album/{album_rel:path}/dates", response_class=HTMLResponse)
-async def date_review_page(request: Request, album_rel: str):
-    folder = _find_album(album_rel)
-    if not folder:
-        return HTMLResponse("Map niet gevonden", status_code=404)
-    photos = _load_photos(folder)
+@app.post("/album/{album_rel:path}/save", response_class=HTMLResponse)
+async def album_context_save(request: Request, album_rel: str):
+    form = await request.form()
     album_data = AlbumData.load(album_rel)
-    return templates.TemplateResponse("dates.html", {
+    album_data.start_date = form.get("start_date", "").strip()
+    album_data.end_date = form.get("end_date", "").strip()
+    album_data.context_notes = form.get("context_notes", "").strip()
+
+    # Parse milestones
+    milestones = []
+    i = 0
+    while f"ms_photo_{i}" in form:
+        photo_idx = form.get(f"ms_photo_{i}", "").strip()
+        ms_date = form.get(f"ms_date_{i}", "").strip()
+        ms_desc = form.get(f"ms_desc_{i}", "").strip()
+        if photo_idx and ms_date and ms_desc:
+            milestones.append(Milestone(
+                photo_index=int(photo_idx),
+                date=ms_date,
+                description=ms_desc,
+            ))
+        i += 1
+    album_data.milestones = milestones
+    album_data.save()
+
+    return templates.TemplateResponse("album_context.html", {
         "request": request,
         "album_rel": album_rel,
-        "photos": photos,
         "album_data": album_data,
+        "photo_count": len(_load_photos(_find_album(album_rel))),
+        "folder_name": _find_album(album_rel).name,
+        "saved": True,
     })
 
 
@@ -270,6 +252,48 @@ async def date_review_page(request: Request, album_rel: str):
 
 @app.post("/album/{album_rel:path}/apply", response_class=HTMLResponse)
 async def apply_dates(request: Request, album_rel: str):
+    form = await request.form()
+    folder = _find_album(album_rel)
+    if not folder:
+        return HTMLResponse("Map niet gevonden", status_code=404)
+
+    count = 0
+    for key, value in form.items():
+        if key.startswith("date_") and value:
+            filename = key[5:]
+            filepath = folder / filename
+            if filepath.is_file():
+                try:
+                    dt = date.fromisoformat(value)
+                    write_exif_date(filepath, dt, backup=True)
+                    count += 1
+                except (ValueError, Exception):
+                    pass
+
+    return templates.TemplateResponse("applied.html", {
+        "request": request,
+        "album_rel": album_rel,
+        "folder_name": folder.name,
+        "count": count,
+    })
+
+
+# --- Page: Album context (step 1) --- (catch-all, must be LAST)
+
+@app.get("/album/{album_rel:path}", response_class=HTMLResponse)
+async def album_context_page(request: Request, album_rel: str):
+    folder = _find_album(album_rel)
+    if not folder:
+        return HTMLResponse("Map niet gevonden", status_code=404)
+    album_data = AlbumData.load(album_rel)
+    photos = _load_photos(folder)
+    return templates.TemplateResponse("album_context.html", {
+        "request": request,
+        "album_rel": album_rel,
+        "album_data": album_data,
+        "photo_count": len(photos),
+        "folder_name": folder.name,
+    })
     form = await request.form()
     folder = _find_album(album_rel)
     if not folder:

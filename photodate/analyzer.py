@@ -1,5 +1,6 @@
 import base64
 import json
+import logging
 import re
 from datetime import date
 from io import BytesIO
@@ -9,6 +10,8 @@ from PIL import Image
 
 from .models import DateEstimate, PhotoInfo
 from .storage import AlbumData, GlobalSettings
+
+logger = logging.getLogger(__name__)
 
 MAX_IMAGE_SIZE = 1024
 BATCH_SIZE = 10
@@ -128,23 +131,35 @@ def analyze_batch(
     )
     content.append({"type": "text", "text": prompt})
 
+    logger.info(f"Analyzing batch of {len(photos)} photos (offset {start_offset})")
+
     response = client.chat.completions.create(
         model="gpt-4o",
         max_tokens=4096,
         messages=[{"role": "user", "content": content}],
+        response_format={"type": "json_object"},
+        timeout=120,
     )
 
     response_text = response.choices[0].message.content or ""
-    # Strip markdown code fences if present
     response_text = response_text.strip()
-    response_text = re.sub(r"^```(?:json)?\s*\n?", "", response_text)
-    response_text = re.sub(r"\n?\s*```\s*$", "", response_text)
-    response_text = response_text.strip()
+
+    logger.info(f"Got response ({len(response_text)} chars, finish_reason: {response.choices[0].finish_reason})")
 
     if not response_text:
         raise ValueError(f"Empty response from OpenAI API (finish_reason: {response.choices[0].finish_reason})")
 
-    return json.loads(response_text)
+    parsed = json.loads(response_text)
+
+    # response_format json_object may wrap in {"results": [...]} or similar
+    if isinstance(parsed, dict):
+        # Find the list inside the dict
+        for value in parsed.values():
+            if isinstance(value, list):
+                return value
+        raise ValueError(f"Unexpected JSON structure: {list(parsed.keys())}")
+
+    return parsed
 
 
 def analyze_album_full(

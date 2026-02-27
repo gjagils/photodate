@@ -189,11 +189,17 @@ async def album_analyze(request: Request, album_rel: str):
     if not folder:
         return HTMLResponse("Map niet gevonden", status_code=404)
 
+    form = await request.form()
+    limit = int(form.get("limit", 0)) or None
+
     photos = _load_photos(folder)
+    if limit:
+        photos = photos[:limit]
+
     album_data = AlbumData.load(album_rel)
     settings = GlobalSettings.load()
 
-    # Face detection
+    # Face detection (skip — disabled on Synology)
     face_results = detect_faces_in_album([p.path for p in photos])
 
     # AI date analysis
@@ -201,7 +207,11 @@ async def album_analyze(request: Request, album_rel: str):
         client = openai.OpenAI()
         album_data = analyze_album_full(photos, album_data, settings, client)
     except Exception as e:
-        return HTMLResponse(f"<h2>Fout bij AI analyse</h2><pre>{e}</pre>", status_code=500)
+        return HTMLResponse(
+            f"<h2>Fout bij AI analyse</h2><pre>{type(e).__name__}: {e}</pre>"
+            f"<p><a href='/album/{album_rel}'>Terug</a></p>",
+            status_code=500,
+        )
 
     return templates.TemplateResponse("results.html", {
         "request": request,

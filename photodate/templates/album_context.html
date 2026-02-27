@@ -63,9 +63,15 @@
     <div class="card">
         <h2>Analyseren</h2>
         <p style="color: #aaa; margin-bottom: 1rem;">
-            Start de AI-analyse. Dit scant alle foto's, detecteert gezichten, en schat datums.
-            Dit kan even duren bij grote albums.
+            Start de AI-analyse. Dit schat datums op basis van visuele aanwijzingen.
         </p>
+
+        <label>Aantal foto's analyseren</label>
+        <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem;">
+            <input type="number" name="limit" value="{{ photo_count }}" min="1" max="{{ photo_count }}" style="width: 100px;">
+            <span style="color: #aaa;">van {{ photo_count }} foto's (begin klein om te testen)</span>
+        </div>
+
         <button type="submit" onclick="this.disabled=true; this.textContent='Bezig met analyseren...'; this.form.submit();">
             Analyseer dit album
         </button>

@@ -134,10 +134,15 @@ def analyze_batch(
         messages=[{"role": "user", "content": content}],
     )
 
-    response_text = response.choices[0].message.content
+    response_text = response.choices[0].message.content or ""
     # Strip markdown code fences if present
-    response_text = re.sub(r"^```(?:json)?\n?", "", response_text)
-    response_text = re.sub(r"\n?```$", "", response_text)
+    response_text = response_text.strip()
+    response_text = re.sub(r"^```(?:json)?\s*\n?", "", response_text)
+    response_text = re.sub(r"\n?\s*```\s*$", "", response_text)
+    response_text = response_text.strip()
+
+    if not response_text:
+        raise ValueError(f"Empty response from OpenAI API (finish_reason: {response.choices[0].finish_reason})")
 
     return json.loads(response_text)
 

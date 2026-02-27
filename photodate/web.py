@@ -197,8 +197,11 @@ async def album_analyze(request: Request, album_rel: str):
     face_results = detect_faces_in_album([p.path for p in photos])
 
     # AI date analysis
-    client = openai.OpenAI()
-    album_data = analyze_album_full(photos, album_data, settings, client)
+    try:
+        client = openai.OpenAI()
+        album_data = analyze_album_full(photos, album_data, settings, client)
+    except Exception as e:
+        return HTMLResponse(f"<h2>Fout bij AI analyse</h2><pre>{e}</pre>", status_code=500)
 
     return templates.TemplateResponse("results.html", {
         "request": request,

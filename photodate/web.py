@@ -514,9 +514,21 @@ async def verify_callback(request: Request):
     redirect_uri = f"{base_url}/verify/callback"
     flow = get_oauth_flow(settings.google_credentials_path, redirect_uri)
 
-    # Exchange authorization code for credentials
-    flow.fetch_token(authorization_response=str(request.url))
-    save_credentials(flow.credentials)
+    # Ensure authorization_response uses same scheme as redirect_uri
+    auth_response = str(request.url)
+    if redirect_uri.startswith("https://") and auth_response.startswith("http://"):
+        auth_response = "https://" + auth_response[len("http://"):]
+
+    try:
+        flow.fetch_token(authorization_response=auth_response)
+        save_credentials(flow.credentials)
+    except Exception as e:
+        logger.exception("OAuth callback failed")
+        return HTMLResponse(
+            f"<h2>OAuth fout</h2><p>{e}</p>"
+            "<p><a href='/verify/auth'>Probeer opnieuw</a></p>",
+            status_code=500,
+        )
 
     from fastapi.responses import RedirectResponse
     return RedirectResponse(url="/verify")

@@ -24,6 +24,7 @@ class Milestone:
 @dataclass
 class GlobalSettings:
     family_members: list[FamilyMember] = field(default_factory=list)
+    google_credentials_path: str = ""  # Path to Google OAuth2 credentials JSON
 
     def save(self) -> None:
         STORAGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -37,7 +38,8 @@ class GlobalSettings:
             return cls()
         data = json.loads(path.read_text())
         return cls(
-            family_members=[FamilyMember(**m) for m in data.get("family_members", [])]
+            family_members=[FamilyMember(**m) for m in data.get("family_members", [])],
+            google_credentials_path=data.get("google_credentials_path", ""),
         )
 
 
@@ -55,6 +57,8 @@ class AlbumData:
     photo_reasoning: dict[str, str] = field(default_factory=dict)  # filename -> reason
     photo_confidence: dict[str, str] = field(default_factory=dict)  # filename -> level
     photo_groups: dict[str, int] = field(default_factory=dict)  # filename -> group_id
+    # Perceptual hashes for duplicate detection
+    photo_hashes: dict[str, str] = field(default_factory=dict)  # filename -> phash hex
 
     def save(self) -> None:
         STORAGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -81,4 +85,5 @@ class AlbumData:
             photo_reasoning=data.get("photo_reasoning", {}),
             photo_confidence=data.get("photo_confidence", {}),
             photo_groups=data.get("photo_groups", {}),
+            photo_hashes=data.get("photo_hashes", {}),
         )

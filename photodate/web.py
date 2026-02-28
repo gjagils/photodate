@@ -1,25 +1,36 @@
+import logging
 import os
+import shutil
+import subprocess
 from datetime import date
 from io import BytesIO
 from pathlib import Path
 
 import openai
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, Form, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 from PIL import Image
 
 from .analyzer import analyze_album_full
+from .duplicates import find_duplicates
 from .exif import read_exif_date, write_exif_date
 from .faces import detect_faces_in_album
 from .models import PhotoInfo
-from .storage import AlbumData, FamilyMember, GlobalSettings, Milestone
+from .gphotos import (
+    get_oauth_flow, load_credentials, save_credentials,
+    get_service, list_all_media_items, match_local_to_google,
+)
+from .storage import AlbumData, FamilyMember, GlobalSettings, Milestone, STORAGE_DIR
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Photodate")
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
 EXTENSIONS = {".jpg", ".jpeg", ".png", ".tiff", ".tif"}
-SKIP_DIRS = {"@eaDir", "#recycle", ".git"}
+SKIP_DIRS = {"@eaDir", "#recycle", ".git", "_duplicates"}
+SYNOINDEX = Path("/usr/syno/bin/synoindex")
 
 
 # --- Helpers ---
@@ -51,6 +62,19 @@ def _find_album(album_rel: str) -> Path | None:
         if candidate.is_dir():
             return candidate
     return None
+
+
+def _reindex_synology(filepath: Path) -> None:
+    """Ask Synology to re-index a modified photo so Photos picks up new EXIF dates."""
+    if not SYNOINDEX.exists():
+        return
+    try:
+        subprocess.run(
+            [str(SYNOINDEX), "-a", str(filepath)],
+            timeout=10, capture_output=True,
+        )
+    except Exception as e:
+        logger.warning(f"synoindex failed for {filepath}: {e}")
 
 
 def _load_photos(folder: Path) -> list[PhotoInfo]:
@@ -104,6 +128,7 @@ async def settings_page(request: Request):
     return templates.TemplateResponse("settings.html", {
         "request": request,
         "settings": settings,
+        "google_connected": load_credentials() is not None,
     })
 
 
@@ -119,11 +144,29 @@ async def settings_save(request: Request):
         if name:
             members.append(FamilyMember(name=name, birthdate=birthdate, notes=notes))
         i += 1
-    settings = GlobalSettings(family_members=members)
+
+    # Handle Google credentials file upload
+    old_settings = GlobalSettings.load()
+    google_creds_path = old_settings.google_credentials_path
+
+    creds_file = form.get("google_credentials")
+    if creds_file and hasattr(creds_file, "read"):
+        STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+        dest = STORAGE_DIR / "google_credentials.json"
+        content = await creds_file.read()
+        if content:
+            dest.write_bytes(content)
+            google_creds_path = str(dest)
+
+    settings = GlobalSettings(
+        family_members=members,
+        google_credentials_path=google_creds_path,
+    )
     settings.save()
     return templates.TemplateResponse("settings.html", {
         "request": request,
         "settings": settings,
+        "google_connected": load_credentials() is not None,
         "saved": True,
     })
 
@@ -155,8 +198,11 @@ async def album_analyze(request: Request, album_rel: str):
 
     form = await request.form()
     limit = int(form.get("limit", 0)) or None
+    only_missing = form.get("only_missing") == "1"
 
     photos = _load_photos(folder)
+    if only_missing:
+        photos = [p for p in photos if not p.original_exif_date]
     if limit:
         photos = photos[:limit]
 
@@ -238,12 +284,15 @@ async def album_context_save(request: Request, album_rel: str):
     album_data.milestones = milestones
     album_data.save()
 
+    folder = _find_album(album_rel)
+    photos = _load_photos(folder)
     return templates.TemplateResponse("album_context.html", {
         "request": request,
         "album_rel": album_rel,
         "album_data": album_data,
-        "photo_count": len(_load_photos(_find_album(album_rel))),
-        "folder_name": _find_album(album_rel).name,
+        "photo_count": len(photos),
+        "missing_exif": sum(1 for p in photos if not p.original_exif_date),
+        "folder_name": folder.name,
         "saved": True,
     })
 
@@ -258,6 +307,7 @@ async def apply_dates(request: Request, album_rel: str):
         return HTMLResponse("Map niet gevonden", status_code=404)
 
     count = 0
+    reindexed = 0
     for key, value in form.items():
         if key.startswith("date_") and value:
             filename = key[5:]
@@ -267,6 +317,8 @@ async def apply_dates(request: Request, album_rel: str):
                     dt = date.fromisoformat(value)
                     write_exif_date(filepath, dt, backup=True)
                     count += 1
+                    _reindex_synology(filepath)
+                    reindexed += 1
                 except (ValueError, Exception):
                     pass
 
@@ -275,7 +327,199 @@ async def apply_dates(request: Request, album_rel: str):
         "album_rel": album_rel,
         "folder_name": folder.name,
         "count": count,
+        "reindexed": reindexed if SYNOINDEX.exists() else None,
     })
+
+
+# --- Page: Duplicate detection ---
+
+@app.get("/album/{album_rel:path}/duplicates", response_class=HTMLResponse)
+async def album_duplicates(request: Request, album_rel: str):
+    folder = _find_album(album_rel)
+    if not folder:
+        return HTMLResponse("Map niet gevonden", status_code=404)
+
+    photos = _load_photos(folder)
+    album_data = AlbumData.load(album_rel)
+
+    # Find duplicates using perceptual hashing
+    photo_paths = [p.path for p in photos]
+    groups, updated_hashes = find_duplicates(
+        photo_paths, cached_hashes=album_data.photo_hashes
+    )
+
+    # Save updated hashes to cache
+    album_data.photo_hashes = updated_hashes
+    album_data.save()
+
+    # Check if _duplicates folder exists and has files
+    dup_folder = folder / "_duplicates"
+    dup_files = []
+    if dup_folder.is_dir():
+        dup_files = sorted(
+            f.name for f in dup_folder.iterdir()
+            if f.is_file() and f.suffix.lower() in EXTENSIONS
+        )
+
+    return templates.TemplateResponse("duplicates.html", {
+        "request": request,
+        "album_rel": album_rel,
+        "folder_name": folder.name,
+        "groups": groups,
+        "dup_files": dup_files,
+        "photo_count": len(photos),
+    })
+
+
+@app.post("/album/{album_rel:path}/duplicates/move", response_class=HTMLResponse)
+async def move_duplicates(request: Request, album_rel: str):
+    folder = _find_album(album_rel)
+    if not folder:
+        return HTMLResponse("Map niet gevonden", status_code=404)
+
+    form = await request.form()
+    dup_folder = folder / "_duplicates"
+
+    moved = 0
+    # For each group, the "keep" radio has the filename to keep.
+    # All other files in that group should be moved.
+    for key, value in form.items():
+        if key.startswith("move_"):
+            filename = key[5:]
+            filepath = folder / filename
+            if filepath.is_file():
+                dup_folder.mkdir(exist_ok=True)
+                shutil.move(str(filepath), str(dup_folder / filename))
+                moved += 1
+
+    # Redirect back to duplicates page
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(
+        url=f"/album/{album_rel}/duplicates?moved={moved}",
+        status_code=303,
+    )
+
+
+@app.post("/album/{album_rel:path}/duplicates/cleanup", response_class=HTMLResponse)
+async def cleanup_duplicates(request: Request, album_rel: str):
+    folder = _find_album(album_rel)
+    if not folder:
+        return HTMLResponse("Map niet gevonden", status_code=404)
+
+    dup_folder = folder / "_duplicates"
+    removed = 0
+    if dup_folder.is_dir():
+        for f in dup_folder.iterdir():
+            if f.is_file():
+                f.unlink()
+                removed += 1
+        dup_folder.rmdir()
+
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(
+        url=f"/album/{album_rel}/duplicates?cleaned={removed}",
+        status_code=303,
+    )
+
+
+# --- Page: Google Photos verification ---
+
+@app.get("/verify", response_class=HTMLResponse)
+async def verify_page(request: Request):
+    settings = GlobalSettings.load()
+    creds = load_credentials()
+
+    if not creds:
+        return templates.TemplateResponse("verify_report.html", {
+            "request": request,
+            "needs_auth": True,
+            "has_credentials": bool(settings.google_credentials_path),
+        })
+
+    # Collect all NAS photos with their metadata
+    service = get_service(creds)
+    local_photos = []
+    for root in _get_photos_roots():
+        if not root.exists():
+            continue
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+            for fname in filenames:
+                filepath = Path(dirpath) / fname
+                if filepath.suffix.lower() not in EXTENSIONS:
+                    continue
+                exif_date = read_exif_date(filepath)
+                try:
+                    img = Image.open(filepath)
+                    w, h = img.size
+                except Exception:
+                    w, h = 0, 0
+
+                # Determine year from EXIF date
+                year = "onbekend"
+                if exif_date and len(exif_date) >= 4:
+                    year = exif_date[:4]
+
+                local_photos.append({
+                    "filename": fname,
+                    "path": str(filepath),
+                    "exif_date": exif_date,
+                    "width": w,
+                    "height": h,
+                    "year": year,
+                })
+
+    # Fetch Google Photos
+    try:
+        google_items = list_all_media_items(service)
+    except Exception as e:
+        return HTMLResponse(
+            f"<h2>Fout bij ophalen Google Photos</h2><pre>{type(e).__name__}: {e}</pre>"
+            f"<p><a href='/verify'>Opnieuw proberen</a></p>",
+            status_code=500,
+        )
+
+    # Match
+    result = match_local_to_google(local_photos, google_items)
+
+    return templates.TemplateResponse("verify_report.html", {
+        "request": request,
+        "result": result,
+        "google_count": len(google_items),
+    })
+
+
+@app.get("/verify/auth", response_class=HTMLResponse)
+async def verify_auth(request: Request):
+    settings = GlobalSettings.load()
+    if not settings.google_credentials_path:
+        return HTMLResponse(
+            "<h2>Geen Google credentials</h2>"
+            "<p>Upload eerst je Google OAuth2 credentials JSON via <a href='/settings'>Instellingen</a>.</p>",
+        )
+
+    base_url = str(request.base_url).rstrip("/")
+    redirect_uri = f"{base_url}/verify/callback"
+    flow = get_oauth_flow(settings.google_credentials_path, redirect_uri)
+    auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline")
+
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url=auth_url)
+
+
+@app.get("/verify/callback", response_class=HTMLResponse)
+async def verify_callback(request: Request):
+    settings = GlobalSettings.load()
+    base_url = str(request.base_url).rstrip("/")
+    redirect_uri = f"{base_url}/verify/callback"
+    flow = get_oauth_flow(settings.google_credentials_path, redirect_uri)
+
+    # Exchange authorization code for credentials
+    flow.fetch_token(authorization_response=str(request.url))
+    save_credentials(flow.credentials)
+
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/verify")
 
 
 # --- Page: Album context (step 1) --- (catch-all, must be LAST)
@@ -287,34 +531,12 @@ async def album_context_page(request: Request, album_rel: str):
         return HTMLResponse("Map niet gevonden", status_code=404)
     album_data = AlbumData.load(album_rel)
     photos = _load_photos(folder)
+    missing_exif = sum(1 for p in photos if not p.original_exif_date)
     return templates.TemplateResponse("album_context.html", {
         "request": request,
         "album_rel": album_rel,
         "album_data": album_data,
         "photo_count": len(photos),
+        "missing_exif": missing_exif,
         "folder_name": folder.name,
-    })
-    form = await request.form()
-    folder = _find_album(album_rel)
-    if not folder:
-        return HTMLResponse("Map niet gevonden", status_code=404)
-
-    count = 0
-    for key, value in form.items():
-        if key.startswith("date_") and value:
-            filename = key[5:]
-            filepath = folder / filename
-            if filepath.is_file():
-                try:
-                    dt = date.fromisoformat(value)
-                    write_exif_date(filepath, dt, backup=True)
-                    count += 1
-                except (ValueError, Exception):
-                    pass
-
-    return templates.TemplateResponse("applied.html", {
-        "request": request,
-        "album_rel": album_rel,
-        "folder_name": folder.name,
-        "count": count,
     })

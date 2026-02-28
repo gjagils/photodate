@@ -1,10 +1,17 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Datums aanpassen</h1>
-<p style="color: #aaa; margin-bottom: 1.5rem;">Album: {{ album_rel }}</p>
+<p style="color: #aaa; margin-bottom: 1rem;">Album: {{ album_rel }}</p>
+
+<div style="margin-bottom: 1rem;">
+    <label style="display: inline; cursor: pointer; color: #aaa;">
+        <input type="checkbox" id="filterMissing" style="width: auto; margin-right: 0.5rem;">
+        Alleen foto's zonder EXIF-datum tonen
+    </label>
+</div>
 
 <form method="post" action="/album/{{ album_rel }}/apply">
-    <table>
+    <table id="photosTable">
         <tr>
             <th style="width: 160px;">Foto</th>
             <th>Bestand</th>
@@ -15,7 +22,7 @@
         </tr>
         {% for photo in photos %}
         {% set fname = photo.path.name %}
-        <tr>
+        <tr data-has-exif="{{ 'yes' if photo.original_exif_date else 'no' }}">
             <td>
                 <img src="/thumb/{{ album_rel }}/__file__/{{ fname }}?size=120"
                      style="width: 120px; height: 80px; object-fit: cover; border-radius: 4px;">
@@ -43,4 +50,13 @@
         <a href="/album/{{ album_rel }}" class="btn btn-secondary">Terug naar context</a>
     </div>
 </form>
+
+<script>
+document.getElementById('filterMissing').addEventListener('change', function() {
+    const rows = document.querySelectorAll('#photosTable tr[data-has-exif]');
+    rows.forEach(row => {
+        row.style.display = (this.checked && row.dataset.hasExif === 'yes') ? 'none' : '';
+    });
+});
+</script>
 {% endblock %}

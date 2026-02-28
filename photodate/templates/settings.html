@@ -6,13 +6,13 @@
 <div class="alert alert-success">Instellingen opgeslagen.</div>
 {% endif %}
 
-<div class="card">
-    <h2>Familieleden</h2>
-    <p style="color: #aaa; margin-bottom: 1rem;">
-        Voeg familieleden toe zodat de AI verjaardagen en leeftijden kan herkennen.
-    </p>
+<form method="post" action="/settings" enctype="multipart/form-data">
+    <div class="card">
+        <h2>Familieleden</h2>
+        <p style="color: #aaa; margin-bottom: 1rem;">
+            Voeg familieleden toe zodat de AI verjaardagen en leeftijden kan herkennen.
+        </p>
 
-    <form method="post" action="/settings">
         <div id="members">
             {% for member in settings.family_members %}
             <div class="milestone-row" data-idx="{{ loop.index0 }}">
@@ -32,12 +32,38 @@
             {% endfor %}
         </div>
 
-        <div class="actions">
-            <button type="button" onclick="addMember()">+ Familielid toevoegen</button>
-            <button type="submit">Opslaan</button>
-        </div>
-    </form>
-</div>
+        <button type="button" onclick="addMember()" style="margin-top: 0.5rem;" class="btn btn-secondary">+ Familielid toevoegen</button>
+    </div>
+
+    <div class="card">
+        <h2>Google Photos koppeling</h2>
+        <p style="color: #aaa; margin-bottom: 1rem;">
+            Koppel je Google Photos account om te verifiëren welke NAS-foto's ook in Google Photos staan.
+        </p>
+
+        {% if google_connected %}
+        <p class="success" style="margin-bottom: 1rem;">Google Photos is gekoppeld.</p>
+        {% elif settings.google_credentials_path %}
+        <p style="color: #f0a500; margin-bottom: 1rem;">
+            Credentials geüpload, maar nog niet geautoriseerd.
+            <a href="/verify/auth">Autoriseer nu</a>
+        </p>
+        {% endif %}
+
+        <label>Google OAuth2 credentials JSON</label>
+        <p style="color: #666; font-size: 0.85em; margin-bottom: 0.5rem;">
+            Download dit bestand vanuit de
+            <a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console</a>
+            (OAuth 2.0 Client ID → Download JSON).
+        </p>
+        <input type="file" name="google_credentials" accept=".json"
+               style="background: #1a1a2e; border: 1px solid #0f3460; border-radius: 4px; padding: 0.5rem; width: 100%;">
+    </div>
+
+    <div class="actions">
+        <button type="submit">Opslaan</button>
+    </div>
+</form>
 
 <script>
 let memberCount = {{ settings.family_members | length }};

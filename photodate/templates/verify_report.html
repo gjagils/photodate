@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>iCloud Verificatierapport</h1>
+<p style="color: #aaa; margin-bottom: 1.5rem;">
+    Controleer welke NAS-foto's ook in Google Photos staan.
+    Foto's die op beide plekken staan zijn veilig om uit iCloud te verwijderen.
+</p>
+
+{% if needs_auth %}
+<div class="card">
+    {% if has_credentials %}
+    <h2>Google Photos autorisatie nodig</h2>
+    <p style="color: #aaa; margin-bottom: 1rem;">
+        Je Google credentials zijn geüpload. Klik hieronder om toegang te verlenen tot je Google Photos.
+    </p>
+    <a href="/verify/auth" class="btn">Autoriseer Google Photos</a>
+    {% else %}
+    <h2>Google Photos niet gekoppeld</h2>
+    <p style="color: #aaa; margin-bottom: 1rem;">
+        Upload eerst je Google OAuth2 credentials via
+        <a href="/settings">Instellingen</a>, en autoriseer daarna.
+    </p>
+    <a href="/settings" class="btn btn-secondary">Naar instellingen</a>
+    {% endif %}
+</div>
+
+{% elif result %}
+<div class="card">
+    <h2>Overzicht</h2>
+    <div style="display: flex; gap: 2rem; margin-bottom: 1rem;">
+        <div>
+            <p style="font-size: 2em; font-weight: bold; color: #4fc3f7;">{{ result.total }}</p>
+            <p style="color: #aaa;">foto's op NAS</p>
+        </div>
+        <div>
+            <p style="font-size: 2em; font-weight: bold; color: #4ecca3;">{{ result.total_matched }}</p>
+            <p style="color: #aaa;">gevonden in Google Photos</p>
+        </div>
+        <div>
+            <p style="font-size: 2em; font-weight: bold; color: #e94560;">{{ result.total - result.total_matched }}</p>
+            <p style="color: #aaa;">NIET in Google Photos</p>
+        </div>
+        <div>
+            <p style="font-size: 2em; font-weight: bold; color: #aaa;">{{ google_count }}</p>
+            <p style="color: #aaa;">totaal in Google Photos</p>
+        </div>
+    </div>
+
+    {% set pct = (result.total_matched / result.total * 100) if result.total > 0 else 0 %}
+    <div style="background: #1a1a2e; border-radius: 8px; overflow: hidden; height: 30px; margin-bottom: 1rem;">
+        <div style="background: #4ecca3; height: 100%; width: {{ pct }}%; display: flex; align-items: center; justify-content: center; font-weight: bold; min-width: 40px;">
+            {{ "%.1f"|format(pct) }}%
+        </div>
+    </div>
+
+    {% if pct == 100 %}
+    <p class="success" style="font-size: 1.1em;">Alle NAS-foto's staan ook in Google Photos. Veilig om uit iCloud te verwijderen.</p>
+    {% elif pct >= 90 %}
+    <p class="warning" style="font-size: 1.1em;">Bijna alles gedekt. Controleer de ontbrekende foto's hieronder.</p>
+    {% else %}
+    <p class="error" style="font-size: 1.1em;">Niet alle foto's zijn gedekt. Verwijder NIET uit iCloud voordat je de ontbrekende foto's hebt gecontroleerd.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>Per jaar</h2>
+    <table>
+        <tr>
+            <th>Jaar</th>
+            <th>Foto's op NAS</th>
+            <th>In Google Photos</th>
+            <th>Dekking</th>
+            <th>Status</th>
+        </tr>
+        {% for year, data in result.by_year.items() %}
+        {% set year_pct = (data.matched / data.total * 100) if data.total > 0 else 0 %}
+        <tr>
+            <td><strong>{{ year }}</strong></td>
+            <td>{{ data.total }}</td>
+            <td>{{ data.matched }}</td>
+            <td>{{ "%.0f"|format(year_pct) }}%</td>
+            <td>
+                {% if year_pct == 100 %}
+                <span class="confidence-high">Volledig gedekt</span>
+                {% elif year_pct >= 90 %}
+                <span class="confidence-medium">Bijna gedekt</span>
+                {% else %}
+                <span class="confidence-low">Onvolledig</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% if data.unmatched_files %}
+        <tr>
+            <td colspan="5" style="background: #1a1a2e; padding: 0.8rem;">
+                <details>
+                    <summary style="cursor: pointer; color: #e94560;">
+                        {{ data.unmatched_files | length }} foto('s) NIET in Google Photos
+                    </summary>
+                    <ul style="margin-top: 0.5rem; color: #aaa; font-size: 0.85em;">
+                        {% for fname in data.unmatched_files %}
+                        <li>{{ fname }}</li>
+                        {% endfor %}
+                    </ul>
+                </details>
+            </td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+    </table>
+</div>
+
+<div class="actions">
+    <a href="/verify" class="btn btn-secondary">Opnieuw scannen</a>
+    <a href="/" class="btn btn-secondary">Home</a>
+</div>
+{% endif %}
+{% endblock %}

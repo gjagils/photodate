@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Duplicaten — {{ folder_name }}</h1>
+<p style="color: #aaa; margin-bottom: 1.5rem;">{{ photo_count }} foto's gescand</p>
+
+{% if request.query_params.get('moved') %}
+<div class="alert alert-success">{{ request.query_params.get('moved') }} foto('s) verplaatst naar _duplicates map.</div>
+{% endif %}
+{% if request.query_params.get('cleaned') %}
+<div class="alert alert-success">{{ request.query_params.get('cleaned') }} foto('s) definitief verwijderd.</div>
+{% endif %}
+
+{% if groups %}
+<form method="post" action="/album/{{ album_rel }}/duplicates/move">
+    <div class="card">
+        <h2>{{ groups | length }} duplicaat-groep(en) gevonden</h2>
+        <p style="color: #aaa; margin-bottom: 1rem;">
+            Selecteer per groep welke foto je wilt houden. De rest wordt verplaatst naar de _duplicates map.
+        </p>
+
+        {% for group in groups %}
+        <div style="margin-bottom: 1.5rem; padding: 1rem; background: #1a1a2e; border-radius: 8px;">
+            <h3 style="margin-bottom: 0.8rem;">Groep {{ group.id }}</h3>
+            <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                {% for photo in group.photos %}
+                <div style="background: #0f3460; border-radius: 8px; padding: 0.8rem; width: 220px;">
+                    <img src="/thumb/{{ album_rel }}/__file__/{{ photo.filename }}?size=200"
+                         style="width: 100%; height: 150px; object-fit: cover; border-radius: 4px; margin-bottom: 0.5rem;">
+                    <p style="font-size: 0.85em; word-break: break-all;">{{ photo.filename }}</p>
+                    <p style="font-size: 0.8em; color: #aaa;">
+                        {{ photo.width }}x{{ photo.height }} —
+                        {% if photo.size_bytes > 1048576 %}
+                            {{ "%.1f"|format(photo.size_bytes / 1048576) }} MB
+                        {% else %}
+                            {{ "%.0f"|format(photo.size_bytes / 1024) }} KB
+                        {% endif %}
+                    </p>
+                    <p style="font-size: 0.8em; color: #888;">{{ photo.exif_date or "Geen EXIF-datum" }}</p>
+                    <div style="margin-top: 0.5rem; display: flex; gap: 0.5rem;">
+                        <label style="display: inline; cursor: pointer; color: #4ecca3; font-size: 0.85em;">
+                            <input type="radio" name="keep_{{ group.id }}" value="{{ photo.filename }}"
+                                   style="width: auto; margin-right: 0.3rem;"
+                                   onchange="updateMoveFields({{ group.id }})"
+                                   {% if loop.first %}checked{% endif %}>
+                            Houden
+                        </label>
+                    </div>
+                    <input type="hidden" name="move_{{ photo.filename }}" value="1"
+                           id="move_{{ group.id }}_{{ loop.index0 }}"
+                           data-group="{{ group.id }}" data-filename="{{ photo.filename }}"
+                           {% if loop.first %}disabled{% endif %}>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+
+        <button type="submit" onclick="return confirm('Weet je zeker dat je de niet-geselecteerde foto\'s wilt verplaatsen naar _duplicates?');">
+            Verplaats duplicaten
+        </button>
+        <a href="/album/{{ album_rel }}" class="btn btn-secondary" style="margin-left: 0.5rem;">Terug naar album</a>
+    </div>
+</form>
+{% else %}
+<div class="card">
+    <p class="success">Geen duplicaten gevonden in dit album.</p>
+    <br>
+    <a href="/album/{{ album_rel }}" class="btn btn-secondary">Terug naar album</a>
+</div>
+{% endif %}
+
+{% if dup_files %}
+<div class="card" style="margin-top: 1rem;">
+    <h2>_duplicates map ({{ dup_files | length }} bestanden)</h2>
+    <p style="color: #aaa; margin-bottom: 1rem;">
+        Deze foto's zijn eerder als duplicaat gemarkeerd. Je kunt ze definitief verwijderen.
+    </p>
+    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem;">
+        {% for fname in dup_files %}
+        <span style="background: #0f3460; padding: 0.3rem 0.6rem; border-radius: 4px; font-size: 0.85em;">{{ fname }}</span>
+        {% endfor %}
+    </div>
+    <form method="post" action="/album/{{ album_rel }}/duplicates/cleanup">
+        <button type="submit" style="background: #e94560;"
+                onclick="return confirm('Weet je zeker? Dit verwijdert {{ dup_files | length }} bestanden PERMANENT.');">
+            Definitief verwijderen ({{ dup_files | length }} bestanden)
+        </button>
+    </form>
+</div>
+{% endif %}
+
+<script>
+function updateMoveFields(groupId) {
+    // Find which file is selected to keep
+    const radios = document.querySelectorAll(`input[name="keep_${groupId}"]`);
+    let keepFilename = '';
+    radios.forEach(r => { if (r.checked) keepFilename = r.value; });
+
+    // Enable/disable move hidden fields
+    const moveFields = document.querySelectorAll(`input[data-group="${groupId}"]`);
+    moveFields.forEach(f => {
+        f.disabled = (f.dataset.filename === keepFilename);
+    });
+}
+</script>
+{% endblock %}

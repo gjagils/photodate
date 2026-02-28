@@ -1,7 +1,14 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>{{ folder_name }}</h1>
-<p style="color: #aaa; margin-bottom: 1rem;">{{ photo_count }} foto's in dit album</p>
+<p style="color: #aaa; margin-bottom: 1rem;">
+    {{ photo_count }} foto's in dit album
+    {% if missing_exif %}
+    — <span style="color: #e94560;">{{ missing_exif }} zonder EXIF-datum</span>
+    {% else %}
+    — <span style="color: #4ecca3;">alle foto's hebben een EXIF-datum</span>
+    {% endif %}
+</p>
 
 {% if saved %}
 <div class="alert alert-success">Context opgeslagen.</div>
@@ -66,6 +73,15 @@
             Start de AI-analyse. Dit schat datums op basis van visuele aanwijzingen.
         </p>
 
+        {% if missing_exif %}
+        <div style="margin-bottom: 1rem;">
+            <label style="display: inline; cursor: pointer;">
+                <input type="checkbox" name="only_missing" value="1" style="width: auto; margin-right: 0.5rem;">
+                Alleen foto's zonder EXIF-datum ({{ missing_exif }} van {{ photo_count }})
+            </label>
+        </div>
+        {% endif %}
+
         <label>Aantal foto's analyseren</label>
         <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem;">
             <input type="number" name="limit" value="{{ photo_count }}" min="1" max="{{ photo_count }}" style="width: 100px;">
@@ -77,6 +93,17 @@
         </button>
     </div>
 </form>
+
+<div class="card">
+    <h2>Duplicaten</h2>
+    <p style="color: #aaa; margin-bottom: 1rem;">
+        Zoek naar dubbele of bijna-identieke foto's in dit album.
+    </p>
+    <a href="/album/{{ album_rel }}/duplicates" class="btn btn-secondary"
+       onclick="this.textContent='Bezig met scannen...'; this.style.pointerEvents='none';">
+        Zoek duplicaten
+    </a>
+</div>
 
 <script>
 let msCount = {{ album_data.milestones | length }};

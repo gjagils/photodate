@@ -6,8 +6,11 @@
 <div class="card">
     <h2>Fotoalbums</h2>
     <div class="folder-list">
-        {% for folder, label in folders %}
-        <a href="/album/{{ label }}">{{ label }}</a>
+        {% for album in albums %}
+        <a href="/album/{{ album.label }}" style="display: flex; justify-content: space-between; align-items: center;">
+            <span>{{ album.label }}</span>
+            <span style="font-size: 0.8em; color: #aaa;">{{ album.photo_count }} foto's</span>
+        </a>
         {% else %}
         <p style="color: #aaa;">Geen mappen met foto's gevonden.</p>
         {% endfor %}

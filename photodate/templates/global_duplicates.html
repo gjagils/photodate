@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Duplicaten zoeken</h1>
+<p style="color: #aaa; margin-bottom: 1.5rem;">
+    Scan alle albums op dubbele of bijna-identieke foto's.
+</p>
+
+<div class="card" id="scan-card">
+    <h2>Scan</h2>
+    <div id="scan-idle" {% if scan_running %}style="display:none"{% endif %}>
+        <p style="color: #aaa; margin-bottom: 1rem;">
+            Vergelijk alle foto's over alle albums heen met perceptual hashing.
+            Dit kan lang duren bij grote bibliotheken.
+        </p>
+        <button onclick="startScan()" class="btn">Start scan</button>
+        {% if result %}
+        <span style="color: #aaa; margin-left: 1rem; font-size: 0.85em;">Laatste resultaat beschikbaar hieronder</span>
+        {% endif %}
+    </div>
+    <div id="scan-progress" {% if not scan_running %}style="display:none"{% endif %}>
+        <p id="scan-phase" style="color: #4fc3f7; margin-bottom: 0.5rem;">Bezig...</p>
+        <div style="background: #1a1a2e; border-radius: 8px; overflow: hidden; height: 24px; margin-bottom: 0.5rem;">
+            <div id="scan-bar" style="background: #4fc3f7; height: 100%; width: 0%; transition: width 0.3s; display: flex; align-items: center; justify-content: center; font-size: 0.8em; font-weight: bold; min-width: 30px;"></div>
+        </div>
+        <p id="scan-detail" style="color: #aaa; font-size: 0.85em;"></p>
+    </div>
+</div>
+
+{% if result %}
+<div class="card">
+    <h2>Overzicht</h2>
+    <div style="display: flex; gap: 2rem; margin-bottom: 1rem;">
+        <div>
+            <p style="font-size: 2em; font-weight: bold; color: #4fc3f7;">{{ result.total_photos }}</p>
+            <p style="color: #aaa;">foto's gescand</p>
+        </div>
+        <div>
+            <p style="font-size: 2em; font-weight: bold; color: {% if result.total_groups > 0 %}#e94560{% else %}#4ecca3{% endif %};">{{ result.total_groups }}</p>
+            <p style="color: #aaa;">groepen duplicaten</p>
+        </div>
+    </div>
+</div>
+
+{% if result.groups %}
+{% for group in result.groups %}
+<div class="card">
+    <div class="group-header">
+        <strong>Groep {{ group.id }}</strong> — {{ group.photos | length }} foto's
+    </div>
+    <table>
+        <tr>
+            <th>Foto</th>
+            <th>Album</th>
+            <th>Bestandsnaam</th>
+            <th>Afmetingen</th>
+            <th>Grootte</th>
+            <th>EXIF-datum</th>
+        </tr>
+        {% for photo in group.photos %}
+        <tr>
+            <td>
+                <img src="/thumb/{{ photo.album }}/__file__/{{ photo.filename }}?size=80"
+                     style="width: 60px; height: 60px; object-fit: cover; border-radius: 4px;"
+                     onerror="this.style.display='none'">
+            </td>
+            <td><a href="/album/{{ photo.album }}">{{ photo.album }}</a></td>
+            <td style="font-size: 0.85em;">{{ photo.filename }}</td>
+            <td>{{ photo.width }}x{{ photo.height }}</td>
+            <td>{{ "%.1f"|format(photo.size_bytes / 1024 / 1024) }} MB</td>
+            <td>{{ photo.exif_date or "—" }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+</div>
+{% endfor %}
+{% else %}
+<div class="card">
+    <p class="success" style="font-size: 1.1em;">Geen duplicaten gevonden!</p>
+</div>
+{% endif %}
+{% endif %}
+
+<script>
+let polling = {{ 'true' if scan_running else 'false' }};
+
+function startScan() {
+    fetch('/duplicates/scan', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            if (data.ok) {
+                document.getElementById('scan-idle').style.display = 'none';
+                document.getElementById('scan-progress').style.display = 'block';
+                polling = true;
+                pollStatus();
+            } else {
+                alert(data.message || 'Kon scan niet starten');
+            }
+        });
+}
+
+function pollStatus() {
+    if (!polling) return;
+    fetch('/duplicates/status')
+        .then(r => r.json())
+        .then(status => {
+            if (status.running) {
+                const phases = {
+                    'starting': 'Scan wordt gestart...',
+                    'collecting': 'Foto\'s verzamelen...',
+                    'hashing': 'Foto\'s hashen...',
+                };
+                document.getElementById('scan-phase').textContent = phases[status.phase] || status.phase;
+                document.getElementById('scan-detail').textContent = status.detail || '';
+                if (status.total > 0) {
+                    const pct = Math.round(status.progress / status.total * 100);
+                    document.getElementById('scan-bar').style.width = pct + '%';
+                    document.getElementById('scan-bar').textContent = pct + '%';
+                }
+                setTimeout(pollStatus, 1000);
+            } else if (status.done) {
+                window.location.reload();
+            } else if (status.error) {
+                document.getElementById('scan-phase').textContent = 'Fout: ' + status.error;
+                document.getElementById('scan-phase').style.color = '#e94560';
+                polling = false;
+            }
+        })
+        .catch(() => setTimeout(pollStatus, 2000));
+}
+
+if (polling) pollStatus();
+</script>
+{% endblock %}

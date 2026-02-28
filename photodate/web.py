@@ -42,7 +42,8 @@ def _get_photos_roots() -> list[Path]:
     return [Path(p.strip()) for p in raw.split(",") if p.strip()]
 
 
-def _get_all_albums() -> list[tuple[Path, str]]:
+def _get_all_albums() -> list[dict]:
+    """Return list of album dicts with path, label, photo_count."""
     albums = []
     for root in _get_photos_roots():
         if not root.exists():
@@ -50,11 +51,15 @@ def _get_all_albums() -> list[tuple[Path, str]]:
         for dirpath, dirnames, filenames in os.walk(root):
             dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
             dirpath = Path(dirpath)
-            has_photos = any(Path(f).suffix.lower() in EXTENSIONS for f in filenames)
-            if has_photos and dirpath != root:
+            photo_count = sum(1 for f in filenames if Path(f).suffix.lower() in EXTENSIONS)
+            if photo_count > 0 and dirpath != root:
                 rel = dirpath.relative_to(root)
-                albums.append((dirpath, str(rel)))
-    albums.sort(key=lambda x: x[1])
+                albums.append({
+                    "path": dirpath,
+                    "label": str(rel),
+                    "photo_count": photo_count,
+                })
+    albums.sort(key=lambda x: x["label"])
     return albums
 
 
@@ -113,11 +118,11 @@ async def thumbnail(album_rel: str, filename: str, size: int = 150):
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    folders = _get_all_albums()
+    albums = _get_all_albums()
     roots = _get_photos_roots()
     return templates.TemplateResponse("index.html", {
         "request": request,
-        "folders": folders,
+        "albums": albums,
         "photos_roots": roots,
     })
 
@@ -422,6 +427,136 @@ async def cleanup_duplicates(request: Request, album_rel: str):
         url=f"/album/{album_rel}/duplicates?cleaned={removed}",
         status_code=303,
     )
+
+
+# --- Page: Global duplicate detection ---
+
+DUPSCAN_STATUS_PATH = STORAGE_DIR / "dupscan_status.json"
+DUPSCAN_RESULT_PATH = STORAGE_DIR / "dupscan_result.json"
+_dupscan_lock = threading.Lock()
+
+
+def _run_global_dupscan():
+    """Background task: scan all albums for duplicates."""
+    try:
+        STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+        DUPSCAN_STATUS_PATH.write_text(json.dumps({
+            "running": True, "phase": "collecting", "detail": "Foto's verzamelen...",
+            "progress": 0, "total": 0,
+        }))
+
+        # Collect all photo paths across all albums
+        all_paths = []
+        path_to_album = {}
+        for root in _get_photos_roots():
+            if not root.exists():
+                continue
+            for dirpath, dirnames, filenames in os.walk(root):
+                dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+                dirpath_p = Path(dirpath)
+                for fname in filenames:
+                    filepath = dirpath_p / fname
+                    if filepath.suffix.lower() in EXTENSIONS:
+                        all_paths.append(filepath)
+                        try:
+                            rel = dirpath_p.relative_to(root)
+                        except ValueError:
+                            rel = dirpath_p
+                        path_to_album[str(filepath)] = str(rel)
+
+        total = len(all_paths)
+        DUPSCAN_STATUS_PATH.write_text(json.dumps({
+            "running": True, "phase": "hashing",
+            "detail": f"0/{total} foto's gehasht",
+            "progress": 0, "total": total,
+        }))
+
+        groups, _ = find_duplicates(all_paths, cached_hashes=None, threshold=8,
+                                    progress_callback=lambda i, t: DUPSCAN_STATUS_PATH.write_text(json.dumps({
+                                        "running": True, "phase": "hashing",
+                                        "detail": f"{i}/{t} foto's gehasht",
+                                        "progress": i, "total": t,
+                                    })))
+
+        # Serialize groups with album info
+        result_groups = []
+        for g in groups:
+            photos = []
+            for p in g.photos:
+                photos.append({
+                    "filename": p.filename,
+                    "path": str(p.path),
+                    "album": path_to_album.get(str(p.path), ""),
+                    "size_bytes": p.size_bytes,
+                    "width": p.width,
+                    "height": p.height,
+                    "exif_date": p.exif_date,
+                })
+            result_groups.append({"id": g.id, "photos": photos})
+
+        DUPSCAN_RESULT_PATH.write_text(json.dumps({
+            "groups": result_groups,
+            "total_photos": total,
+            "total_groups": len(result_groups),
+        }))
+        DUPSCAN_STATUS_PATH.write_text(json.dumps({"running": False, "done": True}))
+
+    except Exception as e:
+        logger.exception("Global duplicate scan failed")
+        DUPSCAN_STATUS_PATH.write_text(json.dumps({"running": False, "error": str(e)}))
+
+
+@app.get("/duplicates", response_class=HTMLResponse)
+async def global_duplicates(request: Request):
+    result = None
+    if DUPSCAN_RESULT_PATH.exists():
+        try:
+            result = json.loads(DUPSCAN_RESULT_PATH.read_text())
+        except Exception:
+            pass
+
+    scan_running = False
+    if DUPSCAN_STATUS_PATH.exists():
+        try:
+            status = json.loads(DUPSCAN_STATUS_PATH.read_text())
+            scan_running = status.get("running", False)
+        except Exception:
+            pass
+
+    return templates.TemplateResponse("global_duplicates.html", {
+        "request": request,
+        "result": result,
+        "scan_running": scan_running,
+    })
+
+
+@app.post("/duplicates/scan")
+async def global_duplicates_scan():
+    with _dupscan_lock:
+        if DUPSCAN_STATUS_PATH.exists():
+            try:
+                status = json.loads(DUPSCAN_STATUS_PATH.read_text())
+                if status.get("running"):
+                    return JSONResponse({"ok": False, "message": "Scan loopt al"})
+            except Exception:
+                pass
+        if DUPSCAN_RESULT_PATH.exists():
+            DUPSCAN_RESULT_PATH.unlink()
+        DUPSCAN_STATUS_PATH.write_text(json.dumps({"running": True, "phase": "starting", "detail": "Start..."}))
+
+    thread = threading.Thread(target=_run_global_dupscan, daemon=True)
+    thread.start()
+    return JSONResponse({"ok": True})
+
+
+@app.get("/duplicates/status")
+async def global_duplicates_status():
+    if not DUPSCAN_STATUS_PATH.exists():
+        return JSONResponse({"running": False})
+    try:
+        return JSONResponse(json.loads(DUPSCAN_STATUS_PATH.read_text()))
+    except Exception:
+        return JSONResponse({"running": False})
 
 
 # --- Page: Google Photos verification ---

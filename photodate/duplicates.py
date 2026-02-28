@@ -38,10 +38,12 @@ def find_duplicates(
     photo_paths: list[Path],
     cached_hashes: dict[str, str] | None = None,
     threshold: int = 8,
+    progress_callback=None,
 ) -> tuple[list[DuplicateGroup], dict[str, str]]:
     """Find duplicate photos using perceptual hashing.
 
     Returns (duplicate_groups, updated_hash_cache).
+    progress_callback(current, total) is called periodically if provided.
     """
     if cached_hashes is None:
         cached_hashes = {}
@@ -49,8 +51,11 @@ def find_duplicates(
     # Compute hashes (use cache where available)
     photos: list[DuplicatePhoto] = []
     updated_cache: dict[str, str] = {}
+    total = len(photo_paths)
 
-    for path in photo_paths:
+    for idx, path in enumerate(photo_paths):
+        if progress_callback and idx % 50 == 0:
+            progress_callback(idx, total)
         fname = path.name
         try:
             # Use cached hash or compute new one

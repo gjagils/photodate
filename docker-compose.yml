@@ -14,9 +14,9 @@ services:
       # Mount hier je fotopaden. Elk pad uit PHOTOS_PATHS moet
       # als volume gemount worden. Formaat: /pad/op/synology:/pad/op/synology
       - /volume1/homes/gjagils/Photos:/volume1/homes/gjagils/Photos
-      # Synology indexer — zorgt dat Photos de nieuwe datums oppikt
-      - /usr/syno/bin/synoindex:/usr/syno/bin/synoindex:ro
-      - /run/synoindex:/run/synoindex
+      # Synology indexer — optioneel, voeg handmatig toe als synoindex beschikbaar is:
+      # - /usr/syno/bin/synoindex:/usr/syno/bin/synoindex:ro
+      # - /run/synoindex:/run/synoindex
 
 volumes:
   photodate-data:

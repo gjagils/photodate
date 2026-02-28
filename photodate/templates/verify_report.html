@@ -24,10 +24,34 @@
     {% endif %}
 </div>
 
-{% elif result %}
+{% else %}
+
+<!-- Scan controls -->
+<div class="card" id="scan-card">
+    <h2>Scan</h2>
+    <div id="scan-idle" {% if scan_running %}style="display:none"{% endif %}>
+        <p style="color: #aaa; margin-bottom: 1rem;">
+            Scan alle foto's op de NAS en vergelijk met Google Photos.
+            Dit kan enkele minuten duren bij grote bibliotheken.
+        </p>
+        <button onclick="startScan()" class="btn">Start scan</button>
+        {% if result %}
+        <span style="color: #aaa; margin-left: 1rem; font-size: 0.85em;">Laatste resultaat beschikbaar hieronder</span>
+        {% endif %}
+    </div>
+    <div id="scan-progress" {% if not scan_running %}style="display:none"{% endif %}>
+        <p id="scan-phase" style="color: #4fc3f7; margin-bottom: 0.5rem;">Bezig...</p>
+        <div style="background: #1a1a2e; border-radius: 8px; overflow: hidden; height: 24px; margin-bottom: 0.5rem;">
+            <div id="scan-bar" style="background: #4fc3f7; height: 100%; width: 0%; transition: width 0.3s; display: flex; align-items: center; justify-content: center; font-size: 0.8em; font-weight: bold; min-width: 30px;"></div>
+        </div>
+        <p id="scan-detail" style="color: #aaa; font-size: 0.85em;"></p>
+    </div>
+</div>
+
+{% if result %}
 <div class="card">
     <h2>Overzicht</h2>
-    <div style="display: flex; gap: 2rem; margin-bottom: 1rem;">
+    <div style="display: flex; gap: 2rem; margin-bottom: 1rem; flex-wrap: wrap;">
         <div>
             <p style="font-size: 2em; font-weight: bold; color: #4fc3f7;">{{ result.total }}</p>
             <p style="color: #aaa;">foto's op NAS</p>
@@ -108,10 +132,63 @@
         {% endfor %}
     </table>
 </div>
+{% endif %}
 
 <div class="actions">
-    <a href="/verify" class="btn btn-secondary">Opnieuw scannen</a>
     <a href="/" class="btn btn-secondary">Home</a>
 </div>
 {% endif %}
+
+<script>
+let polling = {{ 'true' if scan_running else 'false' }};
+
+function startScan() {
+    fetch('/verify/scan', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            if (data.ok) {
+                document.getElementById('scan-idle').style.display = 'none';
+                document.getElementById('scan-progress').style.display = 'block';
+                polling = true;
+                pollStatus();
+            } else {
+                alert(data.message || 'Kon scan niet starten');
+            }
+        });
+}
+
+function pollStatus() {
+    if (!polling) return;
+    fetch('/verify/status')
+        .then(r => r.json())
+        .then(status => {
+            if (status.running) {
+                const phases = {
+                    'starting': 'Scan wordt gestart...',
+                    'local': 'Lokale foto\'s scannen...',
+                    'google': 'Google Photos ophalen...',
+                    'matching': 'Foto\'s matchen...',
+                };
+                document.getElementById('scan-phase').textContent = phases[status.phase] || status.phase;
+                document.getElementById('scan-detail').textContent = status.detail || '';
+                if (status.total > 0) {
+                    const pct = Math.round(status.progress / status.total * 100);
+                    document.getElementById('scan-bar').style.width = pct + '%';
+                    document.getElementById('scan-bar').textContent = pct + '%';
+                }
+                setTimeout(pollStatus, 1000);
+            } else if (status.done) {
+                window.location.reload();
+            } else if (status.error) {
+                document.getElementById('scan-phase').textContent = 'Fout: ' + status.error;
+                document.getElementById('scan-phase').style.color = '#e94560';
+                document.getElementById('scan-detail').textContent = '';
+                polling = false;
+            }
+        })
+        .catch(() => setTimeout(pollStatus, 2000));
+}
+
+if (polling) pollStatus();
+</script>
 {% endblock %}

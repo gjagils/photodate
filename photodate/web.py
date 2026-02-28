@@ -1,14 +1,16 @@
+import json
 import logging
 import os
 import shutil
 import subprocess
+import threading
 from datetime import date
 from io import BytesIO
 from pathlib import Path
 
 import openai
 from fastapi import FastAPI, Form, Request, UploadFile, File
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
 from PIL import Image
 
@@ -424,6 +426,93 @@ async def cleanup_duplicates(request: Request, album_rel: str):
 
 # --- Page: Google Photos verification ---
 
+VERIFY_STATUS_PATH = STORAGE_DIR / "verify_status.json"
+VERIFY_RESULT_PATH = STORAGE_DIR / "verify_result.json"
+_verify_lock = threading.Lock()
+
+
+def _update_verify_status(phase: str, detail: str = "", progress: int = 0, total: int = 0):
+    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+    VERIFY_STATUS_PATH.write_text(json.dumps({
+        "running": True,
+        "phase": phase,
+        "detail": detail,
+        "progress": progress,
+        "total": total,
+    }))
+
+
+def _run_verify_scan():
+    """Background task: scan local photos and match against Google Photos."""
+    try:
+        _update_verify_status("local", "Lokale foto's scannen...")
+        creds = load_credentials()
+        if not creds:
+            VERIFY_STATUS_PATH.write_text(json.dumps({"running": False, "error": "Niet geautoriseerd"}))
+            return
+
+        service = get_service(creds)
+        local_photos = []
+        # First count files for progress
+        all_files = []
+        for root in _get_photos_roots():
+            if not root.exists():
+                continue
+            for dirpath, dirnames, filenames in os.walk(root):
+                dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+                for fname in filenames:
+                    filepath = Path(dirpath) / fname
+                    if filepath.suffix.lower() in EXTENSIONS:
+                        all_files.append(filepath)
+
+        total_files = len(all_files)
+        for i, filepath in enumerate(all_files):
+            if i % 100 == 0:
+                _update_verify_status("local", f"{i}/{total_files} foto's gescand", i, total_files)
+            fname = filepath.name
+            exif_date = read_exif_date(filepath)
+            try:
+                img = Image.open(filepath)
+                w, h = img.size
+            except Exception:
+                w, h = 0, 0
+
+            year = "onbekend"
+            if exif_date and len(exif_date) >= 4:
+                year = exif_date[:4]
+
+            local_photos.append({
+                "filename": fname,
+                "path": str(filepath),
+                "exif_date": exif_date,
+                "width": w,
+                "height": h,
+                "year": year,
+            })
+
+        _update_verify_status("google", "Google Photos ophalen...", total_files, total_files)
+
+        try:
+            google_items = list_all_media_items(service)
+        except Exception as e:
+            VERIFY_STATUS_PATH.write_text(json.dumps({
+                "running": False, "error": f"Google Photos fout: {e}",
+            }))
+            return
+
+        _update_verify_status("matching", "Foto's matchen...", 0, 0)
+        result = match_local_to_google(local_photos, google_items)
+        result["google_count"] = len(google_items)
+
+        # Serialize result (remove non-JSON-serializable fields)
+        VERIFY_RESULT_PATH.write_text(json.dumps(result))
+        VERIFY_STATUS_PATH.write_text(json.dumps({"running": False, "done": True}))
+
+    except Exception as e:
+        logger.exception("Verify scan failed")
+        VERIFY_STATUS_PATH.write_text(json.dumps({"running": False, "error": str(e)}))
+
+
 @app.get("/verify", response_class=HTMLResponse)
 async def verify_page(request: Request):
     settings = GlobalSettings.load()
@@ -436,57 +525,61 @@ async def verify_page(request: Request):
             "has_credentials": bool(settings.google_credentials_path),
         })
 
-    # Collect all NAS photos with their metadata
-    service = get_service(creds)
-    local_photos = []
-    for root in _get_photos_roots():
-        if not root.exists():
-            continue
-        for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-            for fname in filenames:
-                filepath = Path(dirpath) / fname
-                if filepath.suffix.lower() not in EXTENSIONS:
-                    continue
-                exif_date = read_exif_date(filepath)
-                try:
-                    img = Image.open(filepath)
-                    w, h = img.size
-                except Exception:
-                    w, h = 0, 0
+    # Check if we have cached results
+    result = None
+    if VERIFY_RESULT_PATH.exists():
+        try:
+            result = json.loads(VERIFY_RESULT_PATH.read_text())
+        except Exception:
+            pass
 
-                # Determine year from EXIF date
-                year = "onbekend"
-                if exif_date and len(exif_date) >= 4:
-                    year = exif_date[:4]
-
-                local_photos.append({
-                    "filename": fname,
-                    "path": str(filepath),
-                    "exif_date": exif_date,
-                    "width": w,
-                    "height": h,
-                    "year": year,
-                })
-
-    # Fetch Google Photos
-    try:
-        google_items = list_all_media_items(service)
-    except Exception as e:
-        return HTMLResponse(
-            f"<h2>Fout bij ophalen Google Photos</h2><pre>{type(e).__name__}: {e}</pre>"
-            f"<p><a href='/verify'>Opnieuw proberen</a></p>",
-            status_code=500,
-        )
-
-    # Match
-    result = match_local_to_google(local_photos, google_items)
+    # Check if scan is running
+    scan_running = False
+    if VERIFY_STATUS_PATH.exists():
+        try:
+            status = json.loads(VERIFY_STATUS_PATH.read_text())
+            scan_running = status.get("running", False)
+        except Exception:
+            pass
 
     return templates.TemplateResponse("verify_report.html", {
         "request": request,
         "result": result,
-        "google_count": len(google_items),
+        "google_count": result.get("google_count", 0) if result else 0,
+        "scan_running": scan_running,
     })
+
+
+@app.post("/verify/scan")
+async def verify_start_scan():
+    with _verify_lock:
+        # Check if already running
+        if VERIFY_STATUS_PATH.exists():
+            try:
+                status = json.loads(VERIFY_STATUS_PATH.read_text())
+                if status.get("running"):
+                    return JSONResponse({"ok": False, "message": "Scan loopt al"})
+            except Exception:
+                pass
+
+        # Clear old results
+        if VERIFY_RESULT_PATH.exists():
+            VERIFY_RESULT_PATH.unlink()
+        _update_verify_status("starting", "Scan wordt gestart...")
+
+    thread = threading.Thread(target=_run_verify_scan, daemon=True)
+    thread.start()
+    return JSONResponse({"ok": True})
+
+
+@app.get("/verify/status")
+async def verify_status():
+    if not VERIFY_STATUS_PATH.exists():
+        return JSONResponse({"running": False})
+    try:
+        return JSONResponse(json.loads(VERIFY_STATUS_PATH.read_text()))
+    except Exception:
+        return JSONResponse({"running": False})
 
 
 @app.get("/verify/auth", response_class=HTMLResponse)

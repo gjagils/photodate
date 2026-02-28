@@ -501,7 +501,11 @@ async def verify_auth(request: Request):
     base_url = str(request.base_url).rstrip("/")
     redirect_uri = f"{base_url}/verify/callback"
     flow = get_oauth_flow(settings.google_credentials_path, redirect_uri)
-    auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline")
+    auth_url, state = flow.authorization_url(prompt="consent", access_type="offline")
+
+    # Save code_verifier for PKCE (needed in callback)
+    verifier_path = STORAGE_DIR / "oauth_code_verifier.txt"
+    verifier_path.write_text(flow.code_verifier or "")
 
     from fastapi.responses import RedirectResponse
     return RedirectResponse(url=auth_url)
@@ -513,6 +517,12 @@ async def verify_callback(request: Request):
     base_url = str(request.base_url).rstrip("/")
     redirect_uri = f"{base_url}/verify/callback"
     flow = get_oauth_flow(settings.google_credentials_path, redirect_uri)
+
+    # Restore PKCE code_verifier from auth step
+    verifier_path = STORAGE_DIR / "oauth_code_verifier.txt"
+    if verifier_path.exists():
+        flow.code_verifier = verifier_path.read_text() or None
+        verifier_path.unlink()
 
     # Ensure authorization_response uses same scheme as redirect_uri
     auth_response = str(request.url)

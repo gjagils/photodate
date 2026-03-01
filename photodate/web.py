@@ -433,6 +433,7 @@ async def cleanup_duplicates(request: Request, album_rel: str):
 
 DUPSCAN_STATUS_PATH = STORAGE_DIR / "dupscan_status.json"
 DUPSCAN_RESULT_PATH = STORAGE_DIR / "dupscan_result.json"
+DUPSCAN_CACHE_PATH = STORAGE_DIR / "dupscan_hash_cache.json"
 _dupscan_lock = threading.Lock()
 
 
@@ -465,18 +466,35 @@ def _run_global_dupscan():
                         path_to_album[str(filepath)] = str(rel)
 
         total = len(all_paths)
+
+        # Load hash cache from previous scans
+        hash_cache = {}
+        if DUPSCAN_CACHE_PATH.exists():
+            try:
+                hash_cache = json.loads(DUPSCAN_CACHE_PATH.read_text())
+            except Exception:
+                pass
+
+        cached = sum(1 for p in all_paths if str(p) in hash_cache)
         DUPSCAN_STATUS_PATH.write_text(json.dumps({
             "running": True, "phase": "hashing",
-            "detail": f"0/{total} foto's gehasht",
+            "detail": f"0/{total} foto's gehasht ({cached} uit cache)",
             "progress": 0, "total": total,
         }))
 
-        groups, _ = find_duplicates(all_paths, cached_hashes=None, threshold=8,
-                                    progress_callback=lambda i, t: DUPSCAN_STATUS_PATH.write_text(json.dumps({
-                                        "running": True, "phase": "hashing",
-                                        "detail": f"{i}/{t} foto's gehasht",
-                                        "progress": i, "total": t,
-                                    })))
+        groups, updated_cache = find_duplicates(
+            all_paths, cached_hashes=hash_cache, threshold=8,
+            progress_callback=lambda i, t: DUPSCAN_STATUS_PATH.write_text(json.dumps({
+                "running": True, "phase": "hashing",
+                "detail": f"{i}/{t} foto's gehasht",
+                "progress": i, "total": t,
+            })))
+
+        # Save hash cache for next scan
+        try:
+            DUPSCAN_CACHE_PATH.write_text(json.dumps(updated_cache))
+        except Exception:
+            pass
 
         # Serialize groups with album info
         result_groups = []

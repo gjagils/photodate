@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>iCloud foto-matching</h1>
+<p style="color: #aaa; margin-bottom: 1.5rem;">
+    Vergelijk iCloud-foto's met je fotoarchief. Per maand zie je hoeveel foto's al aanwezig zijn.
+</p>
+
+{% if no_path %}
+<div class="card">
+    <p style="color: #f0a500;">
+        Geen iCloud-pad ingesteld. Ga naar <a href="/settings">Instellingen</a> om het pad in te stellen.
+    </p>
+</div>
+{% elif not folders %}
+<div class="card">
+    <p style="color: #aaa;">Geen mappen gevonden in het iCloud-pad.</p>
+</div>
+{% else %}
+<div class="card">
+    <h2>Overzicht</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Jaar/Maand</th>
+                <th style="text-align: right;">Totaal</th>
+                <th style="text-align: right;">Aanwezig</th>
+                <th style="text-align: right;">Niet belangrijk</th>
+                <th style="text-align: right;">Ontbrekend</th>
+                <th style="text-align: right;">%</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for folder in folders %}
+            <tr data-year="{{ folder.year }}" data-month="{{ folder.month }}">
+                <td>
+                    {% if folder.month == "00" %}
+                    {{ folder.year }}
+                    {% else %}
+                    {{ folder.year }}/{{ folder.month }}
+                    {% endif %}
+                </td>
+                <td style="text-align: right;">{{ folder.photo_count }}</td>
+                <td style="text-align: right;" class="col-matched"><span style="color: #aaa;">…</span></td>
+                <td style="text-align: right;" class="col-dismissed"><span style="color: #aaa;">…</span></td>
+                <td style="text-align: right;" class="col-unmatched"><span style="color: #aaa;">…</span></td>
+                <td style="text-align: right;" class="col-pct"><span style="color: #aaa;">…</span></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<script>
+async function loadCounts() {
+    const rows = document.querySelectorAll('tr[data-year]');
+    const queue = [...rows];
+
+    async function processNext() {
+        while (queue.length > 0) {
+            const row = queue.shift();
+            const year = row.dataset.year;
+            const month = row.dataset.month;
+            try {
+                const resp = await fetch(`/api/icloud/${year}/${month}/counts`);
+                if (!resp.ok) continue;
+                const data = await resp.json();
+
+                row.querySelector('.col-matched').innerHTML =
+                    `<span style="color: #4ecca3;">${data.matched}</span>`;
+
+                if (data.dismissed > 0) {
+                    row.querySelector('.col-dismissed').innerHTML =
+                        `<span style="color: #aaa;">${data.dismissed}</span>`;
+                } else {
+                    row.querySelector('.col-dismissed').innerHTML =
+                        `<span style="color: #aaa;">0</span>`;
+                }
+
+                if (data.unmatched > 0) {
+                    row.querySelector('.col-unmatched').innerHTML =
+                        `<a href="/icloud/${year}/${month}/review" style="color: #e94560; font-weight: bold;">${data.unmatched}</a>`;
+                } else {
+                    row.querySelector('.col-unmatched').innerHTML =
+                        `<span style="color: #4ecca3;">0</span>`;
+                }
+
+                let pctColor = '#4ecca3';
+                if (data.pct < 50) pctColor = '#e94560';
+                else if (data.pct < 100) pctColor = '#f0a500';
+                row.querySelector('.col-pct').innerHTML =
+                    `<span style="color: ${pctColor}; font-weight: bold;">${data.pct}%</span>`;
+            } catch (e) {
+                console.error(`Failed to load counts for ${year}/${month}:`, e);
+            }
+        }
+    }
+
+    const workers = [];
+    for (let i = 0; i < Math.min(3, queue.length); i++) {
+        workers.push(processNext());
+    }
+    await Promise.all(workers);
+}
+
+loadCounts();
+</script>
+{% endblock %}

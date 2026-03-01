@@ -25,6 +25,7 @@ class Milestone:
 class GlobalSettings:
     family_members: list[FamilyMember] = field(default_factory=list)
     google_credentials_path: str = ""  # Path to Google OAuth2 credentials JSON
+    icloud_photos_path: str = ""  # Path to iCloud photos directory
 
     def save(self) -> None:
         STORAGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -40,6 +41,28 @@ class GlobalSettings:
         return cls(
             family_members=[FamilyMember(**m) for m in data.get("family_members", [])],
             google_credentials_path=data.get("google_credentials_path", ""),
+            icloud_photos_path=data.get("icloud_photos_path", ""),
+        )
+
+
+@dataclass
+class ICloudData:
+    """Track dismissed (not-important) iCloud photos per YYYY/MM folder."""
+    dismissed: dict[str, list[str]] = field(default_factory=dict)  # "YYYY/MM" -> [filenames]
+
+    def save(self) -> None:
+        STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+        path = STORAGE_DIR / "icloud_data.json"
+        path.write_text(json.dumps(asdict(self), indent=2, ensure_ascii=False))
+
+    @classmethod
+    def load(cls) -> "ICloudData":
+        path = STORAGE_DIR / "icloud_data.json"
+        if not path.exists():
+            return cls()
+        data = json.loads(path.read_text())
+        return cls(
+            dismissed=data.get("dismissed", {}),
         )
 
 

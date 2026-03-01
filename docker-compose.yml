@@ -14,6 +14,8 @@ services:
       # Mount hier je fotopaden. Elk pad uit PHOTOS_PATHS moet
       # als volume gemount worden. Formaat: /pad/op/synology:/pad/op/synology
       - /volume1/homes/gjagils/Photos:/volume1/homes/gjagils/Photos
+      # iCloud foto's (read-only, voor matching)
+      - /volume1/homes/gjagils/icloudphotos:/volume1/homes/gjagils/icloudphotos:ro
       # Synology indexer — optioneel, voeg handmatig toe als synoindex beschikbaar is:
       # - /usr/syno/bin/synoindex:/usr/syno/bin/synoindex:ro
       # - /run/synoindex:/run/synoindex

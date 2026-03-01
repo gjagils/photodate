@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>iCloud: {{ year }}{% if month != "00" %}/{{ month }}{% endif %}</h1>
+<p style="color: #aaa; margin-bottom: 1.5rem;">
+    {{ total_unmatched }} foto's niet gevonden in je archief.
+    Selecteer foto's en kies een actie.
+</p>
+
+{% if total_unmatched == 0 %}
+<div class="card">
+    <p class="success">Alle foto's zijn afgehandeld!</p>
+</div>
+{% else %}
+<form method="post" action="/icloud/{{ year }}/{{ month }}/action" id="reviewForm">
+    <div style="position: sticky; top: 0; z-index: 10; background: #1a1a2e; padding: 1rem 0; border-bottom: 1px solid #0f3460; margin-bottom: 1rem;">
+        <div class="actions" style="margin: 0; flex-wrap: wrap;">
+            <button type="submit" name="action" value="keep" style="background: #4ecca3;"
+                    onclick="this.disabled=true; this.textContent='Bezig met kopiëren...'; this.form.submit();">
+                Behouden (kopieer naar archief)
+            </button>
+            <button type="submit" name="action" value="dismiss" class="btn-secondary"
+                    onclick="this.disabled=true; this.textContent='Bezig...'; this.form.submit();">
+                Niet belangrijk
+            </button>
+            <span style="color: #aaa; align-self: center;" id="selectedCount">{{ total_unmatched }} van {{ total_unmatched }} geselecteerd</span>
+            <span style="margin-left: auto; display: flex; gap: 0.5rem;">
+                <button type="button" class="btn-secondary" style="font-size: 0.75em; padding: 0.3rem 0.6rem;"
+                        onclick="toggleAll(true)">alles aan</button>
+                <button type="button" class="btn-secondary" style="font-size: 0.75em; padding: 0.3rem 0.6rem;"
+                        onclick="toggleAll(false)">alles uit</button>
+            </span>
+        </div>
+    </div>
+
+    <div class="photo-grid">
+        {% for photo in photos %}
+        <label class="photo-card" style="cursor: pointer; position: relative;">
+            <input type="checkbox" name="photos" value="{{ photo }}"
+                   checked onchange="updateCount()"
+                   style="position: absolute; top: 8px; left: 8px; width: 20px; height: 20px; accent-color: #4fc3f7; z-index: 1;">
+            <img src="/icloud-thumb/{{ year }}/{{ month }}/{{ photo }}?size=200"
+                 loading="lazy" alt="{{ photo }}"
+                 onerror="this.style.display='none'">
+            <div class="info">
+                <p style="font-size: 0.75em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                   title="{{ photo }}">{{ photo }}</p>
+            </div>
+        </label>
+        {% endfor %}
+    </div>
+</form>
+{% endif %}
+
+<div class="actions" style="margin-top: 1rem;">
+    <a href="/icloud" class="btn btn-secondary">Terug naar iCloud overzicht</a>
+</div>
+
+<script>
+const totalPhotos = {{ total_unmatched }};
+
+function updateCount() {
+    const checked = document.querySelectorAll('#reviewForm input[name="photos"]:checked').length;
+    document.getElementById('selectedCount').textContent = `${checked} van ${totalPhotos} geselecteerd`;
+}
+
+function toggleAll(state) {
+    document.querySelectorAll('#reviewForm input[name="photos"]').forEach(cb => cb.checked = state);
+    updateCount();
+}
+</script>
+{% endblock %}

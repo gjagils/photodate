@@ -10,7 +10,7 @@ from pathlib import Path
 
 import openai
 from fastapi import FastAPI, Form, Request, UploadFile, File
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from PIL import Image
 
@@ -23,7 +23,7 @@ from .gphotos import (
     get_oauth_flow, load_credentials, save_credentials,
     get_service, list_all_media_items, match_local_to_google,
 )
-from .storage import AlbumData, FamilyMember, GlobalSettings, Milestone, STORAGE_DIR
+from .storage import AlbumData, FamilyMember, GlobalSettings, ICloudData, Milestone, STORAGE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -416,6 +416,263 @@ async def toggle_never_organize(album_rel: str):
     return JSONResponse({"never_organize": album_data.never_organize})
 
 
+# --- iCloud photo matching ---
+
+def _build_photos_filename_index() -> set[str]:
+    """Build a set of all photo filenames across all PHOTOS_PATHS (fast, no EXIF)."""
+    index: set[str] = set()
+    for root in _get_photos_roots():
+        if not root.exists():
+            continue
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+            for f in filenames:
+                if Path(f).suffix.lower() in EXTENSIONS:
+                    index.add(f.lower())
+    return index
+
+
+def _get_icloud_folders(icloud_path: Path) -> list[dict]:
+    """Scan iCloud directory for YYYY/MM folder structure. Returns sorted list."""
+    folders = []
+    if not icloud_path.exists():
+        return folders
+    for year_dir in sorted(icloud_path.iterdir()):
+        if not year_dir.is_dir() or not year_dir.name.isdigit() or len(year_dir.name) != 4:
+            continue
+        year = year_dir.name
+        # Check for month subdirs
+        has_months = False
+        for month_dir in sorted(year_dir.iterdir()):
+            if month_dir.is_dir() and month_dir.name.isdigit() and len(month_dir.name) == 2:
+                has_months = True
+                photo_count = sum(
+                    1 for f in month_dir.iterdir()
+                    if f.is_file() and f.suffix.lower() in EXTENSIONS
+                )
+                if photo_count > 0:
+                    folders.append({
+                        "year": year,
+                        "month": month_dir.name,
+                        "path": month_dir,
+                        "photo_count": photo_count,
+                    })
+        # If no month subdirs, treat year folder itself as a single entry
+        if not has_months:
+            photo_count = sum(
+                1 for f in year_dir.iterdir()
+                if f.is_file() and f.suffix.lower() in EXTENSIONS
+            )
+            if photo_count > 0:
+                folders.append({
+                    "year": year,
+                    "month": "00",
+                    "path": year_dir,
+                    "photo_count": photo_count,
+                })
+    return folders
+
+
+@app.get("/icloud", response_class=HTMLResponse)
+async def icloud_dashboard(request: Request):
+    """iCloud matching dashboard: list all year/month folders."""
+    settings = GlobalSettings.load()
+    icloud_path = Path(settings.icloud_photos_path) if settings.icloud_photos_path else None
+
+    if not icloud_path or not icloud_path.exists():
+        return templates.TemplateResponse("icloud.html", {
+            "request": request,
+            "folders": [],
+            "no_path": True,
+        })
+
+    folders = _get_icloud_folders(icloud_path)
+    return templates.TemplateResponse("icloud.html", {
+        "request": request,
+        "folders": folders,
+        "no_path": False,
+    })
+
+
+@app.get("/api/icloud/{year}/{month}/counts")
+async def icloud_counts(year: str, month: str):
+    """Return match counts for one iCloud year/month folder (lazy loading)."""
+    settings = GlobalSettings.load()
+    if not settings.icloud_photos_path:
+        return JSONResponse({"error": "no icloud path"}, status_code=400)
+
+    icloud_path = Path(settings.icloud_photos_path)
+    if month == "00":
+        folder = icloud_path / year
+    else:
+        folder = icloud_path / year / month
+
+    if not folder.exists():
+        return JSONResponse({"error": "folder not found"}, status_code=404)
+
+    # Get all iCloud photos in this folder
+    icloud_files = [
+        f.name for f in folder.iterdir()
+        if f.is_file() and f.suffix.lower() in EXTENSIONS
+    ]
+    total = len(icloud_files)
+    if total == 0:
+        return JSONResponse({"total": 0, "matched": 0, "dismissed": 0, "unmatched": 0, "pct": 100})
+
+    # Build filename index of user's photos
+    index = _build_photos_filename_index()
+
+    # Load dismissed data
+    icloud_data = ICloudData.load()
+    key = f"{year}/{month}"
+    dismissed_set = set(icloud_data.dismissed.get(key, []))
+
+    matched = 0
+    dismissed = 0
+    unmatched = 0
+
+    for fname in icloud_files:
+        if fname.lower() in index:
+            matched += 1
+        elif fname in dismissed_set:
+            dismissed += 1
+        else:
+            unmatched += 1
+
+    pct = round((matched + dismissed) / total * 100) if total > 0 else 100
+    return JSONResponse({
+        "total": total,
+        "matched": matched,
+        "dismissed": dismissed,
+        "unmatched": unmatched,
+        "pct": pct,
+    })
+
+
+@app.get("/icloud-thumb/{year}/{month}/{filename}")
+async def icloud_thumbnail(year: str, month: str, filename: str, size: int = 150):
+    """Serve thumbnail for an iCloud photo."""
+    settings = GlobalSettings.load()
+    if not settings.icloud_photos_path:
+        return Response(status_code=404)
+
+    icloud_path = Path(settings.icloud_photos_path)
+    if month == "00":
+        filepath = icloud_path / year / filename
+    else:
+        filepath = icloud_path / year / month / filename
+
+    if not filepath.is_file():
+        return Response(status_code=404)
+
+    img = Image.open(filepath)
+    img.thumbnail((size, size))
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=80)
+    return Response(content=buf.getvalue(), media_type="image/jpeg")
+
+
+@app.get("/icloud/{year}/{month}/review", response_class=HTMLResponse)
+async def icloud_review(request: Request, year: str, month: str):
+    """Show unmatched iCloud photos with thumbnails for keep/dismiss."""
+    settings = GlobalSettings.load()
+    if not settings.icloud_photos_path:
+        return HTMLResponse("iCloud pad niet ingesteld", status_code=400)
+
+    icloud_path = Path(settings.icloud_photos_path)
+    if month == "00":
+        folder = icloud_path / year
+    else:
+        folder = icloud_path / year / month
+
+    if not folder.exists():
+        return HTMLResponse("Map niet gevonden", status_code=404)
+
+    icloud_files = sorted(
+        f.name for f in folder.iterdir()
+        if f.is_file() and f.suffix.lower() in EXTENSIONS
+    )
+
+    index = _build_photos_filename_index()
+    icloud_data = ICloudData.load()
+    key = f"{year}/{month}"
+    dismissed_set = set(icloud_data.dismissed.get(key, []))
+
+    # Only show unmatched (not in user photos AND not dismissed)
+    unmatched = [f for f in icloud_files if f.lower() not in index and f not in dismissed_set]
+
+    return templates.TemplateResponse("icloud_review.html", {
+        "request": request,
+        "year": year,
+        "month": month,
+        "photos": unmatched,
+        "total_unmatched": len(unmatched),
+    })
+
+
+@app.post("/icloud/{year}/{month}/action", response_class=HTMLResponse)
+async def icloud_action(request: Request, year: str, month: str):
+    """Process keep/dismiss actions for iCloud photos."""
+    form = await request.form()
+    action = form.get("action", "")
+    photo_names = form.getlist("photos")
+
+    if not photo_names:
+        return RedirectResponse(url=f"/icloud/{year}/{month}/review", status_code=303)
+
+    settings = GlobalSettings.load()
+    if not settings.icloud_photos_path:
+        return HTMLResponse("iCloud pad niet ingesteld", status_code=400)
+
+    icloud_path = Path(settings.icloud_photos_path)
+    if month == "00":
+        folder = icloud_path / year
+    else:
+        folder = icloud_path / year / month
+
+    if action == "dismiss":
+        # Mark as not important
+        icloud_data = ICloudData.load()
+        key = f"{year}/{month}"
+        existing = set(icloud_data.dismissed.get(key, []))
+        existing.update(photo_names)
+        icloud_data.dismissed[key] = sorted(existing)
+        icloud_data.save()
+
+    elif action == "keep":
+        # Copy to YYYY/MM in user's photos
+        photos_roots = _get_photos_roots()
+        if not photos_roots:
+            return HTMLResponse("Geen foto-mappen ingesteld", status_code=400)
+        photos_root = photos_roots[0]
+        dest_dir = photos_root / year / (month if month != "00" else "01")
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        errors = []
+        for fname in photo_names:
+            source = folder / fname
+            if not source.is_file():
+                errors.append(f"{fname}: niet gevonden")
+                continue
+            dest_path = dest_dir / fname
+            if dest_path.exists():
+                stem = source.stem
+                suffix = source.suffix
+                counter = 1
+                while dest_path.exists():
+                    dest_path = dest_dir / f"{stem}_{counter}{suffix}"
+                    counter += 1
+            try:
+                shutil.copy2(str(source), str(dest_path))
+                _reindex_synology(dest_path)
+            except Exception as e:
+                errors.append(f"{fname}: {e}")
+
+    return RedirectResponse(url=f"/icloud/{year}/{month}/review", status_code=303)
+
+
 # --- Page: Global Settings (family members) ---
 
 @app.get("/settings", response_class=HTMLResponse)
@@ -454,9 +711,12 @@ async def settings_save(request: Request):
             dest.write_bytes(content)
             google_creds_path = str(dest)
 
+    icloud_photos_path = form.get("icloud_photos_path", "").strip()
+
     settings = GlobalSettings(
         family_members=members,
         google_credentials_path=google_creds_path,
+        icloud_photos_path=icloud_photos_path,
     )
     settings.save()
     return templates.TemplateResponse("settings.html", {

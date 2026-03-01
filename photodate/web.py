@@ -61,7 +61,7 @@ def _get_photos_roots() -> list[Path]:
 
 
 def _get_all_albums() -> list[dict]:
-    """Return list of album dicts with path, label, photo_count."""
+    """Return list of album dicts with path, label, photo_count, never_organize, is_year_month."""
     albums = []
     for root in _get_photos_roots():
         if not root.exists():
@@ -72,10 +72,13 @@ def _get_all_albums() -> list[dict]:
             photo_count = sum(1 for f in filenames if Path(f).suffix.lower() in EXTENSIONS)
             if photo_count > 0 and dirpath != root:
                 rel = dirpath.relative_to(root)
+                album_data = AlbumData.load(str(rel))
                 albums.append({
                     "path": dirpath,
                     "label": str(rel),
                     "photo_count": photo_count,
+                    "never_organize": album_data.never_organize,
+                    "is_year_month": _is_year_month_folder(rel),
                 })
     albums.sort(key=lambda x: x["label"])
     return albums
@@ -90,33 +93,6 @@ def _is_year_month_folder(rel: Path) -> bool:
         and parts[1].isdigit() and len(parts[1]) == 2
     )
 
-
-def _get_all_albums_with_exif_counts() -> list[dict]:
-    """Return album dicts with EXIF counts for the organize page."""
-    albums = []
-    for root in _get_photos_roots():
-        if not root.exists():
-            continue
-        for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-            dirpath = Path(dirpath)
-            photo_count = sum(1 for f in filenames if Path(f).suffix.lower() in EXTENSIONS)
-            if photo_count > 0 and dirpath != root:
-                rel = dirpath.relative_to(root)
-                album_data = AlbumData.load(str(rel))
-                photos = _load_photos(dirpath)
-                exif_count = sum(1 for p in photos if p.original_exif_date)
-                albums.append({
-                    "path": dirpath,
-                    "label": str(rel),
-                    "photo_count": photo_count,
-                    "exif_count": exif_count,
-                    "no_exif_count": photo_count - exif_count,
-                    "never_organize": album_data.never_organize,
-                    "is_year_month": _is_year_month_folder(rel),
-                })
-    albums.sort(key=lambda x: x["label"])
-    return albums
 
 
 def _find_album(album_rel: str) -> Path | None:
@@ -198,8 +174,8 @@ async def index(request: Request):
 
 @app.get("/organize", response_class=HTMLResponse)
 async def organize_page(request: Request):
-    """Dedicated organize page: list all albums with EXIF status."""
-    albums = _get_all_albums_with_exif_counts()
+    """Dedicated organize page: list all albums (fast, no EXIF reading)."""
+    albums = _get_all_albums()
 
     organizable = []
     already_organized = []
@@ -218,6 +194,20 @@ async def organize_page(request: Request):
         "organizable": organizable,
         "already_organized": already_organized,
         "never_move": never_move,
+    })
+
+
+@app.get("/api/album/{album_rel:path}/exif-counts")
+async def album_exif_counts(album_rel: str):
+    """Return EXIF counts for a single album (used for lazy loading)."""
+    folder = _find_album(album_rel)
+    if not folder:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    photos = _load_photos(folder)
+    exif_count = sum(1 for p in photos if p.original_exif_date)
+    return JSONResponse({
+        "exif_count": exif_count,
+        "no_exif_count": len(photos) - exif_count,
     })
 
 

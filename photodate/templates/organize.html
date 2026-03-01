@@ -30,29 +30,25 @@
             </thead>
             <tbody>
                 {% for album in organizable %}
-                <tr>
+                <tr data-album="{{ album.label }}">
                     <td>
                         <input type="checkbox"
                                class="organize-check"
                                name="albums"
                                value="{{ album.label }}"
                                onchange="updateActionBar()"
-                               {% if album.exif_count == 0 %}disabled title="Geen foto's met EXIF"{% endif %}
+                               disabled
+                               title="EXIF-data wordt geladen..."
                                style="width: 18px; height: 18px; accent-color: #4fc3f7; cursor: pointer;">
                     </td>
                     <td>
                         <a href="/album/{{ album.label }}">{{ album.label }}</a>
                     </td>
-                    <td style="text-align: right;">
-                        <span style="color: #4ecca3;">{{ album.exif_count }}</span>
-                        <span style="color: #aaa;"> / {{ album.photo_count }}</span>
+                    <td style="text-align: right;" class="exif-col">
+                        <span style="color: #aaa;">…</span>
                     </td>
-                    <td style="text-align: right;">
-                        {% if album.no_exif_count > 0 %}
-                        <span style="color: #f0a500;">{{ album.no_exif_count }}</span>
-                        {% else %}
-                        <span style="color: #aaa;">0</span>
-                        {% endif %}
+                    <td style="text-align: right;" class="no-exif-col">
+                        <span style="color: #aaa;">…</span>
                     </td>
                     <td style="text-align: right;">
                         <button type="button"
@@ -131,5 +127,55 @@ async function toggleNever(albumRel) {
     });
     location.reload();
 }
+
+// Lazy load EXIF counts (max 3 concurrent)
+async function loadExifCounts() {
+    const rows = document.querySelectorAll('tr[data-album]');
+    const queue = [...rows];
+
+    async function processNext() {
+        while (queue.length > 0) {
+            const row = queue.shift();
+            const label = row.dataset.album;
+            try {
+                const resp = await fetch(`/api/album/${encodeURIComponent(label)}/exif-counts`);
+                if (!resp.ok) continue;
+                const data = await resp.json();
+
+                const exifCol = row.querySelector('.exif-col');
+                const noExifCol = row.querySelector('.no-exif-col');
+                const checkbox = row.querySelector('.organize-check');
+
+                exifCol.innerHTML = `<span style="color: #4ecca3;">${data.exif_count}</span>`
+                    + `<span style="color: #aaa;"> / ${data.exif_count + data.no_exif_count}</span>`;
+
+                if (data.no_exif_count > 0) {
+                    noExifCol.innerHTML = `<span style="color: #f0a500;">${data.no_exif_count}</span>`;
+                } else {
+                    noExifCol.innerHTML = `<span style="color: #aaa;">0</span>`;
+                }
+
+                if (data.exif_count > 0) {
+                    checkbox.disabled = false;
+                    checkbox.title = 'Selecteer voor organiseren';
+                } else {
+                    checkbox.disabled = true;
+                    checkbox.title = "Geen foto's met EXIF";
+                }
+            } catch (e) {
+                console.error(`Failed to load EXIF counts for ${label}:`, e);
+            }
+        }
+    }
+
+    // Run max 3 workers in parallel
+    const workers = [];
+    for (let i = 0; i < Math.min(3, queue.length); i++) {
+        workers.push(processNext());
+    }
+    await Promise.all(workers);
+}
+
+loadExifCounts();
 </script>
 {% endblock %}

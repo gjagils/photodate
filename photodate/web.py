@@ -608,13 +608,25 @@ async def global_duplicates_move(request: Request):
     form = await request.form()
     moved = 0
 
+    # Use the first photos root as central duplicates location
+    roots = _get_photos_roots()
+    central_dup_folder = roots[0] / "_duplicates" if roots else Path("/data/_duplicates")
+    central_dup_folder.mkdir(parents=True, exist_ok=True)
+
     for key, value in form.items():
         if key.startswith("move_"):
             filepath = Path(value)  # Full path stored in form value
             if filepath.is_file():
-                dup_folder = filepath.parent / "_duplicates"
-                dup_folder.mkdir(exist_ok=True)
-                shutil.move(str(filepath), str(dup_folder / filepath.name))
+                dest = central_dup_folder / filepath.name
+                # Handle name collisions
+                if dest.exists():
+                    stem = filepath.stem
+                    suffix = filepath.suffix
+                    i = 1
+                    while dest.exists():
+                        dest = central_dup_folder / f"{stem}_{i}{suffix}"
+                        i += 1
+                shutil.move(str(filepath), str(dest))
                 moved += 1
 
     # Update cached results: remove moved files from groups

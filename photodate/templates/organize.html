@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Organiseer albums</h1>
+<p style="color: #aaa; margin-bottom: 1.5rem;">
+    Verplaats foto's met EXIF-datum naar YYYY/MM mappen. Foto's zonder EXIF blijven staan.
+</p>
+
+<form method="post" action="/organize-execute" id="organizeForm">
+    <div style="position: sticky; top: 0; z-index: 10; background: #1a1a2e; padding: 1rem 0; border-bottom: 1px solid #0f3460; margin-bottom: 1rem; display: none;" id="actionBar">
+        <div class="actions" style="margin: 0;">
+            <button type="submit" onclick="this.disabled=true; this.textContent='Bezig met verplaatsen...'; this.form.submit();">
+                Verplaats geselecteerde albums
+            </button>
+            <span id="selectedCount" style="color: #aaa; align-self: center;"></span>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Albums ({{ organizable | length }})</h2>
+        {% if organizable %}
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 30px;"></th>
+                    <th>Album</th>
+                    <th style="text-align: right;">Met EXIF</th>
+                    <th style="text-align: right;">Zonder EXIF</th>
+                    <th style="width: 160px;"></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for album in organizable %}
+                <tr>
+                    <td>
+                        <input type="checkbox"
+                               class="organize-check"
+                               name="albums"
+                               value="{{ album.label }}"
+                               onchange="updateActionBar()"
+                               {% if album.exif_count == 0 %}disabled title="Geen foto's met EXIF"{% endif %}
+                               style="width: 18px; height: 18px; accent-color: #4fc3f7; cursor: pointer;">
+                    </td>
+                    <td>
+                        <a href="/album/{{ album.label }}">{{ album.label }}</a>
+                    </td>
+                    <td style="text-align: right;">
+                        <span style="color: #4ecca3;">{{ album.exif_count }}</span>
+                        <span style="color: #aaa;"> / {{ album.photo_count }}</span>
+                    </td>
+                    <td style="text-align: right;">
+                        {% if album.no_exif_count > 0 %}
+                        <span style="color: #f0a500;">{{ album.no_exif_count }}</span>
+                        {% else %}
+                        <span style="color: #aaa;">0</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: right;">
+                        <button type="button"
+                                class="btn-secondary"
+                                style="font-size: 0.75em; padding: 0.3rem 0.6rem;"
+                                onclick="toggleNever('{{ album.label }}')">
+                            nooit verplaatsen
+                        </button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p style="color: #aaa;">Geen albums om te organiseren.</p>
+        {% endif %}
+    </div>
+</form>
+
+{% if already_organized %}
+<div class="card" style="opacity: 0.6;">
+    <h2>Al georganiseerd ({{ already_organized | length }})</h2>
+    <div class="folder-list">
+        {% for album in already_organized %}
+        <a href="/album/{{ album.label }}" style="display: flex; justify-content: space-between; align-items: center;">
+            <span>{{ album.label }}</span>
+            <span style="font-size: 0.8em; color: #aaa;">{{ album.photo_count }} foto's</span>
+        </a>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+{% if never_move %}
+<div class="card" style="opacity: 0.5;">
+    <h2>Nooit verplaatsen ({{ never_move | length }})</h2>
+    <table>
+        <tbody>
+            {% for album in never_move %}
+            <tr>
+                <td>
+                    <a href="/album/{{ album.label }}" style="color: #aaa;">{{ album.label }}</a>
+                </td>
+                <td style="text-align: right; color: #aaa;">{{ album.photo_count }} foto's</td>
+                <td style="text-align: right;">
+                    <button type="button"
+                            class="btn-secondary"
+                            style="font-size: 0.75em; padding: 0.3rem 0.6rem;"
+                            onclick="toggleNever('{{ album.label }}')">
+                        toch verplaatsen
+                    </button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<script>
+function updateActionBar() {
+    const checked = document.querySelectorAll('.organize-check:checked');
+    const bar = document.getElementById('actionBar');
+    const count = document.getElementById('selectedCount');
+    if (checked.length > 0) {
+        bar.style.display = 'block';
+        count.textContent = `${checked.length} album${checked.length > 1 ? 's' : ''} geselecteerd`;
+    } else {
+        bar.style.display = 'none';
+    }
+}
+
+async function toggleNever(albumRel) {
+    await fetch(`/album/${encodeURIComponent(albumRel)}/toggle-never-organize`, {
+        method: 'POST',
+    });
+    location.reload();
+}
+</script>
+{% endblock %}

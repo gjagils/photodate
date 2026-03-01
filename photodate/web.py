@@ -31,7 +31,7 @@ app = FastAPI(title="Photodate")
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
 EXTENSIONS = {".jpg", ".jpeg", ".png", ".tiff", ".tif"}
-SKIP_DIRS = {"@eaDir", "#recycle", ".git", "_duplicates"}
+SKIP_DIRS = {"@eaDir", "#recycle", ".git", "_duplicates", "nietzelfgenomen"}
 SYNOINDEX = Path("/usr/syno/bin/synoindex")
 
 
@@ -61,7 +61,38 @@ def _get_photos_roots() -> list[Path]:
 
 
 def _get_all_albums() -> list[dict]:
-    """Return list of album dicts with path, label, photo_count, exif_complete."""
+    """Return list of album dicts with path, label, photo_count."""
+    albums = []
+    for root in _get_photos_roots():
+        if not root.exists():
+            continue
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+            dirpath = Path(dirpath)
+            photo_count = sum(1 for f in filenames if Path(f).suffix.lower() in EXTENSIONS)
+            if photo_count > 0 and dirpath != root:
+                rel = dirpath.relative_to(root)
+                albums.append({
+                    "path": dirpath,
+                    "label": str(rel),
+                    "photo_count": photo_count,
+                })
+    albums.sort(key=lambda x: x["label"])
+    return albums
+
+
+def _is_year_month_folder(rel: Path) -> bool:
+    """Check if a relative path is a YYYY/MM folder directly in root."""
+    parts = rel.parts
+    return (
+        len(parts) == 2
+        and parts[0].isdigit() and len(parts[0]) == 4
+        and parts[1].isdigit() and len(parts[1]) == 2
+    )
+
+
+def _get_all_albums_with_exif_counts() -> list[dict]:
+    """Return album dicts with EXIF counts for the organize page."""
     albums = []
     for root in _get_photos_roots():
         if not root.exists():
@@ -73,19 +104,16 @@ def _get_all_albums() -> list[dict]:
             if photo_count > 0 and dirpath != root:
                 rel = dirpath.relative_to(root)
                 album_data = AlbumData.load(str(rel))
-                parts = rel.parts
-                # Only YYYY/MM directly in root (2 parts), not nested like MobileBackup/iPhone/2017/07
-                is_ym = (
-                    len(parts) == 2
-                    and parts[0].isdigit() and len(parts[0]) == 4
-                    and parts[1].isdigit() and len(parts[1]) == 2
-                )
+                photos = _load_photos(dirpath)
+                exif_count = sum(1 for p in photos if p.original_exif_date)
                 albums.append({
                     "path": dirpath,
                     "label": str(rel),
                     "photo_count": photo_count,
-                    "exif_complete": album_data.exif_complete,
-                    "is_year_month": is_ym,
+                    "exif_count": exif_count,
+                    "no_exif_count": photo_count - exif_count,
+                    "never_organize": album_data.never_organize,
+                    "is_year_month": _is_year_month_folder(rel),
                 })
     albums.sort(key=lambda x: x["label"])
     return albums
@@ -166,16 +194,42 @@ async def index(request: Request):
     })
 
 
-# --- Bulk organize: move multiple albums into YYYY/MM ---
+# --- Page: Organize (dedicated workflow page) ---
 
-@app.post("/organize-bulk", response_class=HTMLResponse)
-async def organize_bulk(request: Request):
-    """Move photos from multiple albums into YYYY/MM folders."""
+@app.get("/organize", response_class=HTMLResponse)
+async def organize_page(request: Request):
+    """Dedicated organize page: list all albums with EXIF status."""
+    albums = _get_all_albums_with_exif_counts()
+
+    organizable = []
+    already_organized = []
+    never_move = []
+
+    for album in albums:
+        if album["is_year_month"]:
+            already_organized.append(album)
+        elif album["never_organize"]:
+            never_move.append(album)
+        else:
+            organizable.append(album)
+
+    return templates.TemplateResponse("organize.html", {
+        "request": request,
+        "organizable": organizable,
+        "already_organized": already_organized,
+        "never_move": never_move,
+    })
+
+
+@app.post("/organize-execute", response_class=HTMLResponse)
+async def organize_execute_bulk(request: Request):
+    """Move photos WITH EXIF from selected albums into YYYY/MM folders."""
     form = await request.form()
     album_labels = form.getlist("albums")
 
     total_moved = 0
     total_skipped = 0
+    total_no_exif = 0
     all_errors = []
     albums_processed = []
 
@@ -191,14 +245,15 @@ async def organize_bulk(request: Request):
             continue
 
         photos = _load_photos(folder)
-        missing = sum(1 for p in photos if not p.original_exif_date)
-        if missing > 0:
-            all_errors.append(f"{album_rel}: {missing} foto's missen EXIF-datum, overgeslagen")
-            continue
-
         moved = 0
         skipped = 0
+        no_exif = 0
+
         for photo in photos:
+            if not photo.original_exif_date:
+                no_exif += 1
+                continue  # Leave photos without EXIF in place
+
             d = parse_exif_date(photo.original_exif_date)
             if not d:
                 skipped += 1
@@ -227,57 +282,109 @@ async def organize_bulk(request: Request):
             except Exception as e:
                 all_errors.append(f"{album_rel}/{photo.path.name}: {e}")
 
-        # Clean up empty source folder
-        source_empty = not any(folder.iterdir())
-        if source_empty:
-            try:
-                folder.rmdir()
-            except Exception:
-                pass
+        # Clean up empty source folder (ignore @eaDir etc.)
+        if folder.exists():
+            real_remaining = [f for f in folder.iterdir() if f.name not in SKIP_DIRS]
+            source_empty = len(real_remaining) == 0
+            if source_empty:
+                try:
+                    shutil.rmtree(str(folder))
+                except Exception:
+                    pass
+        else:
+            source_empty = True
 
         total_moved += moved
         total_skipped += skipped
+        total_no_exif += no_exif
         albums_processed.append({
             "label": album_rel,
             "moved": moved,
             "skipped": skipped,
+            "no_exif": no_exif,
             "removed": source_empty,
         })
 
     return templates.TemplateResponse("organize_done.html", {
         "request": request,
-        "album_rel": "",
         "folder_name": f"{len(albums_processed)} albums",
         "moved_count": total_moved,
         "skipped_count": total_skipped,
+        "no_exif_count": total_no_exif,
         "errors": all_errors,
-        "source_removed": False,
         "albums_processed": albums_processed,
     })
 
 
-# --- Toggle: EXIF complete flag ---
+@app.post("/organize-niet-zelf-genomen", response_class=HTMLResponse)
+async def organize_niet_zelf_genomen(request: Request):
+    """Move photos without EXIF to /nietzelfgenomen/ folder."""
+    form = await request.form()
+    album_labels = form.getlist("albums")
 
-@app.post("/album/{album_rel:path}/toggle-exif-complete")
-async def toggle_exif_complete(album_rel: str):
-    album_data = AlbumData.load(album_rel)
-    new_value = not album_data.exif_complete
+    total_moved = 0
+    all_errors = []
 
-    # When turning ON, verify all photos actually have an EXIF date
-    if new_value:
+    for album_rel in album_labels:
         folder = _find_album(album_rel)
-        if folder:
-            photos = _load_photos(folder)
-            missing = sum(1 for p in photos if not p.original_exif_date)
-            if missing > 0:
-                return JSONResponse({
-                    "exif_complete": False,
-                    "error": f"{missing} van {len(photos)} foto's mist een EXIF-datum",
-                })
+        if not folder:
+            continue
 
-    album_data.exif_complete = new_value
+        photos_root = _find_photos_root(folder)
+        if not photos_root:
+            continue
+
+        nzg_dir = photos_root / "nietzelfgenomen"
+        nzg_dir.mkdir(parents=True, exist_ok=True)
+
+        photos = _load_photos(folder)
+        for photo in photos:
+            if photo.original_exif_date:
+                continue  # Skip photos that have EXIF
+
+            dest_path = nzg_dir / photo.path.name
+            if dest_path.exists():
+                stem = photo.path.stem
+                suffix = photo.path.suffix
+                counter = 1
+                while dest_path.exists():
+                    dest_path = nzg_dir / f"{stem}_{counter}{suffix}"
+                    counter += 1
+
+            try:
+                shutil.move(str(photo.path), str(dest_path))
+                total_moved += 1
+            except Exception as e:
+                all_errors.append(f"{album_rel}/{photo.path.name}: {e}")
+
+        # Clean up empty source folder
+        if folder.exists():
+            real_remaining = [f for f in folder.iterdir() if f.name not in SKIP_DIRS]
+            if not real_remaining:
+                try:
+                    shutil.rmtree(str(folder))
+                except Exception:
+                    pass
+
+    return templates.TemplateResponse("organize_done.html", {
+        "request": request,
+        "folder_name": "niet zelf genomen",
+        "moved_count": total_moved,
+        "skipped_count": 0,
+        "no_exif_count": 0,
+        "errors": all_errors,
+        "albums_processed": [],
+    })
+
+
+# --- Toggle: never_organize flag ---
+
+@app.post("/album/{album_rel:path}/toggle-never-organize")
+async def toggle_never_organize(album_rel: str):
+    album_data = AlbumData.load(album_rel)
+    album_data.never_organize = not album_data.never_organize
     album_data.save()
-    return JSONResponse({"exif_complete": album_data.exif_complete})
+    return JSONResponse({"never_organize": album_data.never_organize})
 
 
 # --- Page: Global Settings (family members) ---
@@ -985,132 +1092,6 @@ async def verify_callback(request: Request):
     return RedirectResponse(url="/verify")
 
 
-# --- Page: Organize photos into YYYY/MM folders ---
-
-@app.get("/album/{album_rel:path}/organize", response_class=HTMLResponse)
-async def organize_preview(request: Request, album_rel: str):
-    """Preview: show photos grouped by YYYY/MM based on EXIF dates."""
-    folder = _find_album(album_rel)
-    if not folder:
-        return HTMLResponse("Map niet gevonden", status_code=404)
-
-    photos = _load_photos(folder)
-    missing_exif = sum(1 for p in photos if not p.original_exif_date)
-
-    if missing_exif > 0:
-        return HTMLResponse(
-            f"<h2>Niet alle foto's hebben een EXIF-datum</h2>"
-            f"<p>{missing_exif} van {len(photos)} foto's mist een EXIF-datum. "
-            f"Analyseer eerst het album zodat alle foto's een datum hebben.</p>"
-            f"<p><a href='/album/{album_rel}'>Terug naar album</a></p>",
-            status_code=400,
-        )
-
-    # Group photos by YYYY/MM
-    groups: dict[str, list[dict]] = {}
-    for photo in photos:
-        d = parse_exif_date(photo.original_exif_date)
-        if d:
-            key = f"{d.year}/{d.month:02d}"
-            if key not in groups:
-                groups[key] = []
-            groups[key].append({
-                "filename": photo.path.name,
-                "path": str(photo.path),
-                "exif_date": photo.original_exif_date,
-                "date": d.isoformat(),
-            })
-
-    # Sort groups by year/month
-    sorted_groups = sorted(groups.items())
-
-    # Find the photos root for destination path display
-    photos_root = _find_photos_root(folder)
-    dest_base = str(photos_root) if photos_root else "?"
-
-    return templates.TemplateResponse("organize_preview.html", {
-        "request": request,
-        "album_rel": album_rel,
-        "folder_name": folder.name,
-        "photo_count": len(photos),
-        "groups": sorted_groups,
-        "group_count": len(sorted_groups),
-        "dest_base": dest_base,
-    })
-
-
-@app.post("/album/{album_rel:path}/organize", response_class=HTMLResponse)
-async def organize_execute(request: Request, album_rel: str):
-    """Move photos into YYYY/MM folders in the photos root."""
-    folder = _find_album(album_rel)
-    if not folder:
-        return HTMLResponse("Map niet gevonden", status_code=404)
-
-    photos_root = _find_photos_root(folder)
-    if not photos_root:
-        return HTMLResponse("Kan de foto-root niet vinden", status_code=500)
-
-    photos = _load_photos(folder)
-    missing_exif = sum(1 for p in photos if not p.original_exif_date)
-    if missing_exif > 0:
-        return HTMLResponse("Niet alle foto's hebben een EXIF-datum", status_code=400)
-
-    moved_count = 0
-    skipped_count = 0
-    errors = []
-
-    for photo in photos:
-        d = parse_exif_date(photo.original_exif_date)
-        if not d:
-            skipped_count += 1
-            continue
-
-        dest_dir = photos_root / str(d.year) / f"{d.month:02d}"
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest_path = dest_dir / photo.path.name
-
-        # Skip if already in the right place
-        if photo.path.parent == dest_dir:
-            skipped_count += 1
-            continue
-
-        # Handle filename collision
-        if dest_path.exists():
-            stem = photo.path.stem
-            suffix = photo.path.suffix
-            counter = 1
-            while dest_path.exists():
-                dest_path = dest_dir / f"{stem}_{counter}{suffix}"
-                counter += 1
-
-        try:
-            shutil.move(str(photo.path), str(dest_path))
-            _reindex_synology(dest_path)
-            moved_count += 1
-        except Exception as e:
-            errors.append(f"{photo.path.name}: {e}")
-            logger.warning(f"Failed to move {photo.path}: {e}")
-
-    # Clean up empty source folder
-    source_empty = not any(folder.iterdir())
-    if source_empty:
-        try:
-            folder.rmdir()
-            logger.info(f"Removed empty source folder: {folder}")
-        except Exception as e:
-            logger.warning(f"Could not remove {folder}: {e}")
-
-    return templates.TemplateResponse("organize_done.html", {
-        "request": request,
-        "album_rel": album_rel,
-        "folder_name": folder.name,
-        "moved_count": moved_count,
-        "skipped_count": skipped_count,
-        "errors": errors,
-        "source_removed": source_empty,
-    })
-
-
 # --- Page: Album context (step 1) --- (catch-all, must be LAST)
 
 @app.get("/album/{album_rel:path}", response_class=HTMLResponse)
@@ -1121,13 +1102,7 @@ async def album_context_page(request: Request, album_rel: str):
     album_data = AlbumData.load(album_rel)
     photos = _load_photos(folder)
     missing_exif = sum(1 for p in photos if not p.original_exif_date)
-    # Only YYYY/MM directly in root (2 parts), not nested like MobileBackup/iPhone/2017/07
-    parts = Path(album_rel).parts
-    is_year_month = (
-        len(parts) == 2
-        and parts[0].isdigit() and len(parts[0]) == 4
-        and parts[1].isdigit() and len(parts[1]) == 2
-    )
+    is_year_month = _is_year_month_folder(Path(album_rel))
     return templates.TemplateResponse("album_context.html", {
         "request": request,
         "album_rel": album_rel,

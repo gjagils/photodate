@@ -16,6 +16,12 @@
             <p style="color: #aaa;">overgeslagen</p>
         </div>
         {% endif %}
+        {% if no_exif_count > 0 %}
+        <div>
+            <p style="font-size: 2em; font-weight: bold; color: #f0a500;">{{ no_exif_count }}</p>
+            <p style="color: #aaa;">zonder EXIF (achtergelaten)</p>
+        </div>
+        {% endif %}
         {% if errors %}
         <div>
             <p style="font-size: 2em; font-weight: bold; color: #e94560;">{{ errors | length }}</p>
@@ -23,12 +29,6 @@
         </div>
         {% endif %}
     </div>
-
-    {% if source_removed %}
-    <p class="success" style="margin-top: 1rem;">
-        De bronmap <strong>{{ folder_name }}</strong> was leeg en is automatisch verwijderd.
-    </p>
-    {% endif %}
 
     {% if albums_processed %}
     <div style="margin-top: 1rem;">
@@ -39,6 +39,7 @@
                     <th>Album</th>
                     <th>Verplaatst</th>
                     <th>Overgeslagen</th>
+                    <th>Zonder EXIF</th>
                     <th>Map verwijderd</th>
                 </tr>
             </thead>
@@ -48,6 +49,7 @@
                     <td>{{ a.label }}</td>
                     <td style="color: #4ecca3;">{{ a.moved }}</td>
                     <td>{{ a.skipped }}</td>
+                    <td style="color: #f0a500;">{{ a.no_exif }}</td>
                     <td>{% if a.removed %}<span class="success">ja</span>{% else %}nee{% endif %}</td>
                 </tr>
                 {% endfor %}
@@ -68,7 +70,28 @@
     {% endif %}
 </div>
 
+{% if no_exif_count > 0 and albums_processed %}
+<div class="card">
+    <h2>Foto's zonder EXIF-datum</h2>
+    <p style="color: #aaa; margin-bottom: 1rem;">
+        {{ no_exif_count }} foto's zonder EXIF-datum zijn achtergelaten in de originele mappen.
+        Wil je deze verplaatsen naar de <code>nietzelfgenomen</code> map?
+    </p>
+    <form method="post" action="/organize-niet-zelf-genomen">
+        {% for a in albums_processed %}
+        {% if a.no_exif > 0 %}
+        <input type="hidden" name="albums" value="{{ a.label }}">
+        {% endif %}
+        {% endfor %}
+        <button type="submit" onclick="this.disabled=true; this.textContent='Bezig met verplaatsen...'; this.form.submit();">
+            Verplaats {{ no_exif_count }} foto's naar nietzelfgenomen
+        </button>
+    </form>
+</div>
+{% endif %}
+
 <div class="actions">
-    <a href="/" class="btn">Terug naar Home</a>
+    <a href="/organize" class="btn">Terug naar Organiseer</a>
+    <a href="/" class="btn btn-secondary">Home</a>
 </div>
 {% endblock %}

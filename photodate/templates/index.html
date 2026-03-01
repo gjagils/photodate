@@ -3,102 +3,17 @@
 <h1>Photodate</h1>
 <p style="margin-bottom: 1.5rem; color: #aaa;">Corrigeer datums van ingescande foto's met AI</p>
 
-<form method="post" action="/organize-bulk" id="organizeForm">
-    <div style="position: sticky; top: 0; z-index: 10; background: #1a1a2e; padding: 1rem 0; border-bottom: 1px solid #0f3460; margin-bottom: 1rem; display: none;" id="actionBar">
-        <div class="actions" style="margin: 0;">
-            <button type="submit" onclick="this.disabled=true; this.textContent='Bezig met verplaatsen...'; this.form.submit();">
-                Verplaats geselecteerde albums
-            </button>
-            <span id="selectedCount" style="color: #aaa; align-self: center;"></span>
-        </div>
+<div class="card">
+    <h2>Fotoalbums</h2>
+    <div class="folder-list">
+        {% for album in albums %}
+        <a href="/album/{{ album.label }}" style="display: flex; justify-content: space-between; align-items: center;">
+            <span>{{ album.label }}</span>
+            <span style="font-size: 0.8em; color: #aaa;">{{ album.photo_count }} foto's</span>
+        </a>
+        {% else %}
+        <p style="color: #aaa;">Geen mappen met foto's gevonden.</p>
+        {% endfor %}
     </div>
-
-    <div class="card">
-        <h2>Fotoalbums</h2>
-        <div class="folder-list">
-            {% for album in albums %}
-            <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;" data-album="{{ album.label }}" data-is-ym="{{ album.is_year_month | lower }}">
-                <input type="checkbox"
-                       class="exif-check"
-                       {% if album.exif_complete %}checked{% endif %}
-                       onchange="toggleExif('{{ album.label }}', this)"
-                       title="EXIF datums compleet"
-                       style="width: 18px; height: 18px; accent-color: #4ecca3; cursor: pointer; flex-shrink: 0;">
-                {% if not album.is_year_month %}
-                <input type="checkbox"
-                       class="organize-check"
-                       name="albums"
-                       value="{{ album.label }}"
-                       onchange="updateActionBar()"
-                       title="Selecteer voor organiseren"
-                       style="width: 18px; height: 18px; accent-color: #4fc3f7; cursor: pointer; flex-shrink: 0; {% if not album.exif_complete %}display: none;{% endif %}">
-                {% endif %}
-                <a href="/album/{{ album.label }}" style="display: flex; justify-content: space-between; align-items: center; flex: 1;">
-                    <span>{{ album.label }}</span>
-                    <span style="font-size: 0.8em; color: #aaa;">{{ album.photo_count }} foto's</span>
-                </a>
-            </div>
-            {% else %}
-            <p style="color: #aaa;">Geen mappen met foto's gevonden.</p>
-            {% endfor %}
-        </div>
-    </div>
-</form>
-
-<script>
-async function toggleExif(albumRel, checkbox) {
-    try {
-        const resp = await fetch(`/album/${encodeURIComponent(albumRel)}/toggle-exif-complete`, {
-            method: 'POST',
-        });
-        if (!resp.ok) throw new Error('Toggle failed');
-        const data = await resp.json();
-        checkbox.checked = data.exif_complete;
-
-        // Show error if EXIF dates are missing
-        const row = checkbox.closest('[data-album]');
-        let errEl = row.querySelector('.exif-error');
-        if (data.error) {
-            if (!errEl) {
-                errEl = document.createElement('span');
-                errEl.className = 'exif-error';
-                errEl.style.cssText = 'color: #e94560; font-size: 0.8em; position: absolute; left: 28px; top: 100%; white-space: nowrap;';
-                row.style.position = 'relative';
-                row.appendChild(errEl);
-            }
-            errEl.textContent = data.error;
-            setTimeout(() => errEl.remove(), 4000);
-        } else if (errEl) {
-            errEl.remove();
-        }
-
-        // Show/hide the organize checkbox next to it
-        const orgCheck = row.querySelector('.organize-check');
-        if (orgCheck) {
-            if (data.exif_complete) {
-                orgCheck.style.display = '';
-            } else {
-                orgCheck.style.display = 'none';
-                orgCheck.checked = false;
-                updateActionBar();
-            }
-        }
-    } catch (e) {
-        checkbox.checked = !checkbox.checked;
-        console.error('Toggle exif complete failed:', e);
-    }
-}
-
-function updateActionBar() {
-    const checked = document.querySelectorAll('.organize-check:checked');
-    const bar = document.getElementById('actionBar');
-    const count = document.getElementById('selectedCount');
-    if (checked.length > 0) {
-        bar.style.display = 'block';
-        count.textContent = `${checked.length} album${checked.length > 1 ? 's' : ''} geselecteerd`;
-    } else {
-        bar.style.display = 'none';
-    }
-}
-</script>
+</div>
 {% endblock %}

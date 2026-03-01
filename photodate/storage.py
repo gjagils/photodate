@@ -61,6 +61,8 @@ class AlbumData:
     photo_hashes: dict[str, str] = field(default_factory=dict)  # filename -> phash hex
     # Whether all photos have EXIF dates (user-managed flag)
     exif_complete: bool = False
+    # Whether this album should never be organized (user-managed flag)
+    never_organize: bool = False
 
     def save(self) -> None:
         STORAGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -89,4 +91,5 @@ class AlbumData:
             photo_groups=data.get("photo_groups", {}),
             photo_hashes=data.get("photo_hashes", {}),
             exif_complete=data.get("exif_complete", False),
+            never_organize=data.get("never_organize", False),
         )

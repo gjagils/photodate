@@ -109,18 +109,9 @@
 <div class="card">
     <h2>Organiseer in jaar/maand</h2>
     <p style="color: #aaa; margin-bottom: 1rem;">
-        Verplaats foto's naar <code>YYYY/MM/</code> mappen op basis van hun EXIF-datum.
+        Ga naar de <a href="/organize">Organiseer pagina</a> om foto's
+        naar <code>YYYY/MM/</code> mappen te verplaatsen.
     </p>
-    {% if missing_exif %}
-    <p style="color: #e94560;">
-        <strong>{{ missing_exif }} foto's missen een EXIF-datum.</strong>
-        Analyseer eerst het album zodat alle foto's een datum hebben.
-    </p>
-    {% else %}
-    <a href="/album/{{ album_rel }}/organize" class="btn btn-secondary">
-        Bekijk voorvertoning
-    </a>
-    {% endif %}
 </div>
 {% endif %}
 

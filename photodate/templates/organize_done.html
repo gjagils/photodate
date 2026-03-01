@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Organiseren voltooid</h1>
+
+<div class="card">
+    <h2>{{ folder_name }}</h2>
+
+    <div style="display: flex; gap: 2rem; margin: 1rem 0;">
+        <div>
+            <p style="font-size: 2em; font-weight: bold; color: #4ecca3;">{{ moved_count }}</p>
+            <p style="color: #aaa;">verplaatst</p>
+        </div>
+        {% if skipped_count > 0 %}
+        <div>
+            <p style="font-size: 2em; font-weight: bold; color: #aaa;">{{ skipped_count }}</p>
+            <p style="color: #aaa;">overgeslagen</p>
+        </div>
+        {% endif %}
+        {% if errors %}
+        <div>
+            <p style="font-size: 2em; font-weight: bold; color: #e94560;">{{ errors | length }}</p>
+            <p style="color: #aaa;">fouten</p>
+        </div>
+        {% endif %}
+    </div>
+
+    {% if source_removed %}
+    <p class="success" style="margin-top: 1rem;">
+        De bronmap <strong>{{ folder_name }}</strong> was leeg en is automatisch verwijderd.
+    </p>
+    {% endif %}
+
+    {% if errors %}
+    <div style="margin-top: 1rem;">
+        <h3>Fouten</h3>
+        <ul style="color: #e94560; font-size: 0.9em; padding-left: 1.5rem;">
+            {% for error in errors %}
+            <li>{{ error }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+</div>
+
+<div class="actions">
+    <a href="/" class="btn">Terug naar Home</a>
+</div>
+{% endblock %}

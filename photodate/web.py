@@ -16,7 +16,7 @@ from PIL import Image
 
 from .analyzer import analyze_album_full
 from .duplicates import find_duplicates
-from .exif import read_exif_date, write_exif_date
+from .exif import read_exif_date, write_exif_date, parse_exif_date
 from .faces import detect_faces_in_album
 from .models import PhotoInfo
 from .gphotos import (
@@ -86,6 +86,17 @@ def _find_album(album_rel: str) -> Path | None:
         candidate = root / album_rel
         if candidate.is_dir():
             return candidate
+    return None
+
+
+def _find_photos_root(album_folder: Path) -> Path | None:
+    """Find which photos root contains the given album folder."""
+    for root in _get_photos_roots():
+        try:
+            album_folder.relative_to(root)
+            return root
+        except ValueError:
+            continue
     return None
 
 
@@ -848,6 +859,132 @@ async def verify_callback(request: Request):
 
     from fastapi.responses import RedirectResponse
     return RedirectResponse(url="/verify")
+
+
+# --- Page: Organize photos into YYYY/MM folders ---
+
+@app.get("/album/{album_rel:path}/organize", response_class=HTMLResponse)
+async def organize_preview(request: Request, album_rel: str):
+    """Preview: show photos grouped by YYYY/MM based on EXIF dates."""
+    folder = _find_album(album_rel)
+    if not folder:
+        return HTMLResponse("Map niet gevonden", status_code=404)
+
+    photos = _load_photos(folder)
+    missing_exif = sum(1 for p in photos if not p.original_exif_date)
+
+    if missing_exif > 0:
+        return HTMLResponse(
+            f"<h2>Niet alle foto's hebben een EXIF-datum</h2>"
+            f"<p>{missing_exif} van {len(photos)} foto's mist een EXIF-datum. "
+            f"Analyseer eerst het album zodat alle foto's een datum hebben.</p>"
+            f"<p><a href='/album/{album_rel}'>Terug naar album</a></p>",
+            status_code=400,
+        )
+
+    # Group photos by YYYY/MM
+    groups: dict[str, list[dict]] = {}
+    for photo in photos:
+        d = parse_exif_date(photo.original_exif_date)
+        if d:
+            key = f"{d.year}/{d.month:02d}"
+            if key not in groups:
+                groups[key] = []
+            groups[key].append({
+                "filename": photo.path.name,
+                "path": str(photo.path),
+                "exif_date": photo.original_exif_date,
+                "date": d.isoformat(),
+            })
+
+    # Sort groups by year/month
+    sorted_groups = sorted(groups.items())
+
+    # Find the photos root for destination path display
+    photos_root = _find_photos_root(folder)
+    dest_base = str(photos_root) if photos_root else "?"
+
+    return templates.TemplateResponse("organize_preview.html", {
+        "request": request,
+        "album_rel": album_rel,
+        "folder_name": folder.name,
+        "photo_count": len(photos),
+        "groups": sorted_groups,
+        "group_count": len(sorted_groups),
+        "dest_base": dest_base,
+    })
+
+
+@app.post("/album/{album_rel:path}/organize", response_class=HTMLResponse)
+async def organize_execute(request: Request, album_rel: str):
+    """Move photos into YYYY/MM folders in the photos root."""
+    folder = _find_album(album_rel)
+    if not folder:
+        return HTMLResponse("Map niet gevonden", status_code=404)
+
+    photos_root = _find_photos_root(folder)
+    if not photos_root:
+        return HTMLResponse("Kan de foto-root niet vinden", status_code=500)
+
+    photos = _load_photos(folder)
+    missing_exif = sum(1 for p in photos if not p.original_exif_date)
+    if missing_exif > 0:
+        return HTMLResponse("Niet alle foto's hebben een EXIF-datum", status_code=400)
+
+    moved_count = 0
+    skipped_count = 0
+    errors = []
+
+    for photo in photos:
+        d = parse_exif_date(photo.original_exif_date)
+        if not d:
+            skipped_count += 1
+            continue
+
+        dest_dir = photos_root / str(d.year) / f"{d.month:02d}"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest_path = dest_dir / photo.path.name
+
+        # Skip if already in the right place
+        if photo.path.parent == dest_dir:
+            skipped_count += 1
+            continue
+
+        # Handle filename collision
+        if dest_path.exists():
+            stem = photo.path.stem
+            suffix = photo.path.suffix
+            counter = 1
+            while dest_path.exists():
+                dest_path = dest_dir / f"{stem}_{counter}{suffix}"
+                counter += 1
+
+        try:
+            shutil.move(str(photo.path), str(dest_path))
+            _reindex_synology(dest_path)
+            moved_count += 1
+        except Exception as e:
+            errors.append(f"{photo.path.name}: {e}")
+            logger.warning(f"Failed to move {photo.path}: {e}")
+
+    # Clean up empty source folder
+    source_empty = not any(folder.iterdir())
+    if source_empty:
+        try:
+            folder.rmdir()
+            logger.info(f"Removed empty source folder: {folder}")
+        except Exception as e:
+            logger.warning(f"Could not remove {folder}: {e}")
+
+    return templates.TemplateResponse("organize_done.html", {
+        "request": request,
+        "album_rel": album_rel,
+        "folder_name": folder.name,
+        "moved_count": moved_count,
+        "skipped_count": skipped_count,
+        "errors": errors,
+        "source_removed": source_empty,
+    })
 
 
 # --- Page: Album context (step 1) --- (catch-all, must be LAST)

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Organiseer: {{ folder_name }}</h1>
+<p style="color: #aaa; margin-bottom: 1.5rem;">
+    {{ photo_count }} foto's worden verdeeld over {{ group_count }} mappen
+</p>
+
+<div class="card">
+    <h2>Doelstructuur</h2>
+    <p style="color: #aaa; margin-bottom: 1rem;">
+        Foto's worden verplaatst naar <code>{{ dest_base }}/YYYY/MM/</code> op basis van hun EXIF-datum.
+    </p>
+
+    {% for year_month, photos in groups %}
+    <div class="group-header" style="display: flex; justify-content: space-between; align-items: center;">
+        <span><strong>{{ year_month }}</strong></span>
+        <span style="color: #aaa; font-size: 0.85em;">{{ photos | length }} foto's</span>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; padding: 0.5rem 0; margin-bottom: 0.5rem;">
+        {% for photo in photos[:12] %}
+        <img src="/thumb/{{ album_rel }}/__file__/{{ photo.filename }}?size=80"
+             style="width: 60px; height: 60px; object-fit: cover; border-radius: 4px;"
+             title="{{ photo.filename }} — {{ photo.date }}"
+             onerror="this.style.display='none'">
+        {% endfor %}
+        {% if photos | length > 12 %}
+        <div style="display: flex; align-items: center; color: #aaa; font-size: 0.85em; padding: 0 0.5rem;">
+            +{{ photos | length - 12 }} meer
+        </div>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+
+<form method="post" action="/album/{{ album_rel }}/organize">
+    <div class="actions">
+        <button type="submit" onclick="this.disabled=true; this.textContent='Bezig met verplaatsen...'; this.form.submit();">
+            Verplaats {{ photo_count }} foto's
+        </button>
+        <a href="/album/{{ album_rel }}" class="btn btn-secondary">Annuleren</a>
+    </div>
+</form>
+{% endblock %}

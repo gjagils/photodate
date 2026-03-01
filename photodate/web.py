@@ -412,6 +412,73 @@ async def organize_niet_zelf_genomen(request: Request):
     })
 
 
+# --- API: Move photos to nietzelfgenomen (JSON) ---
+
+@app.post("/api/niet-zelf-genomen")
+async def api_niet_zelf_genomen(request: Request):
+    """Move selected photos to nietzelfgenomen and return JSON result."""
+    body = await request.json()
+    photo_keys = body.get("photos", [])  # values like "album_rel/filename"
+
+    total_moved = 0
+    errors = []
+    cleaned_folders: set[str] = set()
+
+    for photo_key in photo_keys:
+        sep = photo_key.rfind("/")
+        if sep < 0:
+            continue
+        album_rel = photo_key[:sep]
+        filename = photo_key[sep + 1:]
+
+        folder = _find_album(album_rel)
+        if not folder:
+            errors.append(f"{photo_key}: map niet gevonden")
+            continue
+
+        source = folder / filename
+        if not source.is_file():
+            errors.append(f"{photo_key}: bestand niet gevonden")
+            continue
+
+        photos_root = _find_photos_root(folder)
+        if not photos_root:
+            errors.append(f"{photo_key}: kan foto-root niet vinden")
+            continue
+
+        nzg_dir = photos_root / "nietzelfgenomen"
+        nzg_dir.mkdir(parents=True, exist_ok=True)
+
+        dest_path = nzg_dir / filename
+        if dest_path.exists():
+            stem = source.stem
+            suffix = source.suffix
+            counter = 1
+            while dest_path.exists():
+                dest_path = nzg_dir / f"{stem}_{counter}{suffix}"
+                counter += 1
+
+        try:
+            shutil.move(str(source), str(dest_path))
+            total_moved += 1
+            cleaned_folders.add(album_rel)
+        except Exception as e:
+            errors.append(f"{photo_key}: {e}")
+
+    # Clean up empty source folders
+    for ar in cleaned_folders:
+        folder = _find_album(ar)
+        if folder and folder.exists():
+            real_remaining = [f for f in folder.iterdir() if f.name not in SKIP_DIRS]
+            if not real_remaining:
+                try:
+                    shutil.rmtree(str(folder))
+                except Exception:
+                    pass
+
+    return JSONResponse({"moved": total_moved, "errors": errors})
+
+
 # --- Toggle: never_organize flag ---
 
 @app.post("/album/{album_rel:path}/toggle-never-organize")

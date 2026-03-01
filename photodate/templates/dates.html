@@ -3,16 +3,27 @@
 <h1>Datums aanpassen</h1>
 <p style="color: #aaa; margin-bottom: 1rem;">Album: {{ album_rel }}</p>
 
-<div style="margin-bottom: 1rem;">
+<div style="margin-bottom: 1rem; display: flex; gap: 1.5rem; flex-wrap: wrap; align-items: center;">
     <label style="display: inline; cursor: pointer; color: #aaa;">
         <input type="checkbox" id="filterMissing" style="width: auto; margin-right: 0.5rem;">
         Alleen foto's zonder EXIF-datum tonen
     </label>
 </div>
 
-<form method="post" action="/album/{{ album_rel }}/apply">
+<form method="post" action="/album/{{ album_rel }}/apply" id="datesForm">
+    <div style="position: sticky; top: 0; z-index: 10; background: #1a1a2e; padding: 0.75rem 0; border-bottom: 1px solid #0f3460; margin-bottom: 1rem; display: none;" id="nzgBar">
+        <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+            <button type="button" class="btn-secondary" style="background: #e94560; color: #fff; border: none;"
+                    onclick="moveToNietZelfGenomen()">
+                Verplaats naar niet zelf genomen
+            </button>
+            <span style="color: #aaa;" id="nzgCount">0 geselecteerd</span>
+        </div>
+    </div>
+
     <table id="photosTable">
         <tr>
+            <th style="width: 30px;"></th>
             <th style="width: 160px;">Foto</th>
             <th>Bestand</th>
             <th>Huidige EXIF</th>
@@ -22,7 +33,12 @@
         </tr>
         {% for photo in photos %}
         {% set fname = photo.path.name %}
-        <tr data-has-exif="{{ 'yes' if photo.original_exif_date else 'no' }}">
+        <tr data-has-exif="{{ 'yes' if photo.original_exif_date else 'no' }}" data-filename="{{ fname }}">
+            <td>
+                <input type="checkbox" class="nzg-check"
+                       onchange="updateNzgBar()"
+                       style="width: 18px; height: 18px; accent-color: #e94560; cursor: pointer;">
+            </td>
             <td>
                 <img src="/thumb/{{ album_rel }}/__file__/{{ fname }}?size=120"
                      style="width: 120px; height: 80px; object-fit: cover; border-radius: 4px;">
@@ -52,11 +68,76 @@
 </form>
 
 <script>
+const albumRel = {{ album_rel|tojson }};
+
 document.getElementById('filterMissing').addEventListener('change', function() {
     const rows = document.querySelectorAll('#photosTable tr[data-has-exif]');
     rows.forEach(row => {
         row.style.display = (this.checked && row.dataset.hasExif === 'yes') ? 'none' : '';
     });
 });
+
+function updateNzgBar() {
+    const checked = document.querySelectorAll('.nzg-check:checked').length;
+    const bar = document.getElementById('nzgBar');
+    const count = document.getElementById('nzgCount');
+    if (checked > 0) {
+        bar.style.display = 'block';
+        count.textContent = `${checked} geselecteerd`;
+    } else {
+        bar.style.display = 'none';
+    }
+}
+
+async function moveToNietZelfGenomen() {
+    const checked = document.querySelectorAll('.nzg-check:checked');
+    if (checked.length === 0) return;
+
+    if (!confirm(`${checked.length} foto('s) verplaatsen naar niet zelf genomen?`)) return;
+
+    const btn = document.querySelector('#nzgBar button');
+    btn.disabled = true;
+    btn.textContent = 'Bezig met verplaatsen...';
+
+    const photos = [];
+    checked.forEach(cb => {
+        const row = cb.closest('tr');
+        photos.push(`${albumRel}/${row.dataset.filename}`);
+    });
+
+    try {
+        const resp = await fetch('/api/niet-zelf-genomen', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({photos}),
+        });
+        const data = await resp.json();
+
+        // Remove moved rows from the table
+        checked.forEach(cb => {
+            const row = cb.closest('tr');
+            row.style.transition = 'opacity 0.3s';
+            row.style.opacity = '0';
+            setTimeout(() => row.remove(), 300);
+        });
+
+        btn.textContent = `${data.moved} verplaatst`;
+        setTimeout(() => {
+            btn.disabled = false;
+            btn.textContent = 'Verplaats naar niet zelf genomen';
+            updateNzgBar();
+        }, 1500);
+
+        if (data.errors && data.errors.length > 0) {
+            console.error('Fouten bij verplaatsen:', data.errors);
+            alert(`${data.moved} verplaatst, ${data.errors.length} fouten.\n${data.errors.join('\n')}`);
+        }
+    } catch (e) {
+        console.error('Fout bij verplaatsen:', e);
+        btn.disabled = false;
+        btn.textContent = 'Verplaats naar niet zelf genomen';
+        alert('Er ging iets mis bij het verplaatsen.');
+    }
+}
 </script>
 {% endblock %}

@@ -54,7 +54,7 @@
                         <button type="button"
                                 class="btn-secondary"
                                 style="font-size: 0.75em; padding: 0.3rem 0.6rem;"
-                                onclick="toggleNever('{{ album.label }}', this)">
+                                onclick="toggleNever(this)">
                             nooit verplaatsen
                         </button>
                     </td>
@@ -96,7 +96,7 @@
                     <button type="button"
                             class="btn-secondary"
                             style="font-size: 0.75em; padding: 0.3rem 0.6rem;"
-                            onclick="toggleNever('{{ album.label }}', this)">
+                        onclick="toggleNever(this)">
                         toch verplaatsen
                     </button>
                 </td>
@@ -107,6 +107,10 @@
 </div>
 
 <script>
+function encodePath(path) {
+    return path.split('/').map(encodeURIComponent).join('/');
+}
+
 function updateActionBar() {
     const checked = document.querySelectorAll('.organize-check:checked');
     const bar = document.getElementById('actionBar');
@@ -119,14 +123,26 @@ function updateActionBar() {
     }
 }
 
-async function toggleNever(albumRel, btn) {
+async function toggleNever(btn) {
     const row = btn.closest('tr');
+    const albumRel = row.dataset.album;
     const isInNeverList = row.closest('#neverMoveBody');
 
-    const resp = await fetch(`/album/${encodeURIComponent(albumRel)}/toggle-never-organize`, {
-        method: 'POST',
-    });
-    if (!resp.ok) return;
+    btn.disabled = true;
+    try {
+        const resp = await fetch(`/album/${encodePath(albumRel)}/toggle-never-organize`, {
+            method: 'POST',
+        });
+        if (!resp.ok) {
+            console.error(`toggleNever failed for ${albumRel}: ${resp.status} ${resp.statusText}`);
+            btn.disabled = false;
+            return;
+        }
+    } catch (e) {
+        console.error(`toggleNever fetch error for ${albumRel}:`, e);
+        btn.disabled = false;
+        return;
+    }
 
     const neverCard = document.getElementById('neverMoveCard');
     const neverBody = document.getElementById('neverMoveBody');
@@ -137,7 +153,6 @@ async function toggleNever(albumRel, btn) {
     if (isInNeverList) {
         // Move from "nooit verplaatsen" → organizable table
         row.remove();
-        const photoCount = row.dataset.photoCount || '';
         const newRow = document.createElement('tr');
         newRow.dataset.album = albumRel;
         newRow.innerHTML = `
@@ -147,13 +162,13 @@ async function toggleNever(albumRel, btn) {
                        title="EXIF-data wordt geladen..."
                        style="width: 18px; height: 18px; accent-color: #4fc3f7; cursor: pointer;">
             </td>
-            <td><a href="/album/${albumRel}">${albumRel}</a></td>
+            <td><a href="/album/${encodePath(albumRel)}">${albumRel}</a></td>
             <td style="text-align: right;" class="exif-col"><span style="color: #aaa;">…</span></td>
             <td style="text-align: right;" class="no-exif-col"><span style="color: #aaa;">…</span></td>
             <td style="text-align: right;">
                 <button type="button" class="btn-secondary"
                         style="font-size: 0.75em; padding: 0.3rem 0.6rem;"
-                        onclick="toggleNever('${albumRel}', this)">
+                        onclick="toggleNever(this)">
                     nooit verplaatsen
                 </button>
             </td>`;
@@ -162,7 +177,6 @@ async function toggleNever(albumRel, btn) {
         loadExifForRow(newRow);
     } else {
         // Move from organizable → "nooit verplaatsen"
-        const photoCount = row.querySelector('td:nth-child(2) a')?.textContent || albumRel;
         const checkbox = row.querySelector('.organize-check');
         if (checkbox?.checked) {
             checkbox.checked = false;
@@ -172,12 +186,12 @@ async function toggleNever(albumRel, btn) {
         const newRow = document.createElement('tr');
         newRow.dataset.album = albumRel;
         newRow.innerHTML = `
-            <td><a href="/album/${albumRel}" style="color: #aaa;">${albumRel}</a></td>
+            <td><a href="/album/${encodePath(albumRel)}" style="color: #aaa;">${albumRel}</a></td>
             <td style="text-align: right; color: #aaa;">&nbsp;</td>
             <td style="text-align: right;">
                 <button type="button" class="btn-secondary"
                         style="font-size: 0.75em; padding: 0.3rem 0.6rem;"
-                        onclick="toggleNever('${albumRel}', this)">
+                        onclick="toggleNever(this)">
                     toch verplaatsen
                 </button>
             </td>`;
@@ -197,7 +211,7 @@ async function toggleNever(albumRel, btn) {
 async function loadExifForRow(row) {
     const label = row.dataset.album;
     try {
-        const resp = await fetch(`/api/album/${encodeURIComponent(label)}/exif-counts`);
+        const resp = await fetch(`/api/album/${encodePath(label)}/exif-counts`);
         if (!resp.ok) return;
         const data = await resp.json();
         const exifCol = row.querySelector('.exif-col');

@@ -13,6 +13,11 @@ from fastapi import FastAPI, Form, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from PIL import Image
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except ImportError:
+    pass  # HEIC support optional
 
 from .analyzer import analyze_album_full
 from .duplicates import find_duplicates
@@ -31,6 +36,7 @@ app = FastAPI(title="Photodate")
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
 EXTENSIONS = {".jpg", ".jpeg", ".png", ".tiff", ".tif"}
+ICLOUD_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".heic", ".heif", ".mov", ".mp4"}
 SKIP_DIRS = {"@eaDir", "#recycle", ".git", "_duplicates", "nietzelfgenomen"}
 SYNOINDEX = Path("/usr/syno/bin/synoindex")
 
@@ -427,7 +433,10 @@ _PHOTOS_INDEX_TTL = 300  # Cache for 5 minutes
 
 
 def _build_photos_filename_index() -> set[str]:
-    """Build a set of all photo filenames across all PHOTOS_PATHS (cached 5 min, thread-safe)."""
+    """Build a set of all filenames across all PHOTOS_PATHS (cached 5 min, thread-safe).
+
+    Includes all ICLOUD_EXTENSIONS so HEIC/MOV files can also be matched.
+    """
     global _photos_index_cache, _photos_index_timestamp
     now = _time.time()
     if _photos_index_cache is not None and (now - _photos_index_timestamp) < _PHOTOS_INDEX_TTL:
@@ -446,7 +455,7 @@ def _build_photos_filename_index() -> set[str]:
             for dirpath, dirnames, filenames in os.walk(root):
                 dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
                 for f in filenames:
-                    if Path(f).suffix.lower() in EXTENSIONS:
+                    if Path(f).suffix.lower() in ICLOUD_EXTENSIONS:
                         index.add(f.lower())
         _photos_index_cache = index
         _photos_index_timestamp = now
@@ -470,7 +479,7 @@ def _get_icloud_folders(icloud_path: Path) -> list[dict]:
                 has_months = True
                 photo_count = sum(
                     1 for f in month_dir.iterdir()
-                    if f.is_file() and f.suffix.lower() in EXTENSIONS
+                    if f.is_file() and f.suffix.lower() in ICLOUD_EXTENSIONS
                 )
                 if photo_count > 0:
                     folders.append({
@@ -483,7 +492,7 @@ def _get_icloud_folders(icloud_path: Path) -> list[dict]:
         if not has_months:
             photo_count = sum(
                 1 for f in year_dir.iterdir()
-                if f.is_file() and f.suffix.lower() in EXTENSIONS
+                if f.is_file() and f.suffix.lower() in ICLOUD_EXTENSIONS
             )
             if photo_count > 0:
                 folders.append({
@@ -536,10 +545,10 @@ async def icloud_counts(year: str, month: str):
     if not folder.exists():
         return JSONResponse({"error": "folder not found"}, status_code=404)
 
-    # Get all iCloud photos in this folder
+    # Get all iCloud files in this folder (including HEIC, MOV, etc.)
     icloud_files = [
         f.name for f in folder.iterdir()
-        if f.is_file() and f.suffix.lower() in EXTENSIONS
+        if f.is_file() and f.suffix.lower() in ICLOUD_EXTENSIONS
     ]
     total = len(icloud_files)
     if total == 0:
@@ -591,7 +600,14 @@ async def icloud_thumbnail(year: str, month: str, filename: str, size: int = 150
     if not filepath.is_file():
         return Response(status_code=404)
 
-    img = Image.open(filepath)
+    # Video files can't generate thumbnails
+    if filepath.suffix.lower() in {".mov", ".mp4"}:
+        return Response(status_code=404)
+
+    try:
+        img = Image.open(filepath)
+    except Exception:
+        return Response(status_code=404)
     img.thumbnail((size, size))
     if img.mode not in ("RGB", "L"):
         img = img.convert("RGB")
@@ -618,7 +634,7 @@ async def icloud_review(request: Request, year: str, month: str):
 
     icloud_files = sorted(
         f.name for f in folder.iterdir()
-        if f.is_file() and f.suffix.lower() in EXTENSIONS
+        if f.is_file() and f.suffix.lower() in ICLOUD_EXTENSIONS
     )
 
     index = _build_photos_filename_index()

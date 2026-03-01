@@ -12,14 +12,15 @@
 </div>
 {% else %}
 <form method="post" action="/icloud/{{ year }}/{{ month }}/action" id="reviewForm">
+    <input type="hidden" name="action" id="actionField" value="">
     <div style="position: sticky; top: 0; z-index: 10; background: #1a1a2e; padding: 1rem 0; border-bottom: 1px solid #0f3460; margin-bottom: 1rem;">
         <div class="actions" style="margin: 0; flex-wrap: wrap;">
-            <button type="submit" name="action" value="keep" style="background: #4ecca3;"
-                    onclick="this.disabled=true; this.textContent='Bezig met kopiëren...'; this.form.submit();">
+            <button type="button" style="background: #4ecca3;"
+                    onclick="submitAction('keep', this, 'Bezig met kopiëren...')">
                 Behouden (kopieer naar archief)
             </button>
-            <button type="submit" name="action" value="dismiss" class="btn-secondary"
-                    onclick="this.disabled=true; this.textContent='Bezig...'; this.form.submit();">
+            <button type="button" class="btn-secondary"
+                    onclick="submitAction('dismiss', this, 'Bezig...')">
                 Niet belangrijk
             </button>
             <span style="color: #aaa; align-self: center;" id="selectedCount">{{ total_unmatched }} van {{ total_unmatched }} geselecteerd</span>
@@ -66,6 +67,13 @@ function updateCount() {
 function toggleAll(state) {
     document.querySelectorAll('#reviewForm input[name="photos"]').forEach(cb => cb.checked = state);
     updateCount();
+}
+
+function submitAction(action, btn, loadingText) {
+    document.getElementById('actionField').value = action;
+    btn.disabled = true;
+    btn.textContent = loadingText;
+    document.getElementById('reviewForm').submit();
 }
 </script>
 {% endblock %}

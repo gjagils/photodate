@@ -2,6 +2,11 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Install system dependencies for pillow-heif (HEIC support)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libheif-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy source and install dependencies
 COPY pyproject.toml .
 COPY photodate/ photodate/

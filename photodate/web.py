@@ -629,20 +629,9 @@ async def global_duplicates_move(request: Request):
                 shutil.move(str(filepath), str(dest))
                 moved += 1
 
-    # Update cached results: remove moved files from groups
+    # Clear cached results after moving — a new scan will use the hash cache
     if DUPSCAN_RESULT_PATH.exists():
-        try:
-            result = json.loads(DUPSCAN_RESULT_PATH.read_text())
-            moved_paths = {v for k, v in form.items() if k.startswith("move_")}
-            for group in result.get("groups", []):
-                group["photos"] = [
-                    p for p in group["photos"] if p["path"] not in moved_paths
-                ]
-            result["groups"] = [g for g in result["groups"] if len(g["photos"]) > 1]
-            result["total_groups"] = len(result["groups"])
-            DUPSCAN_RESULT_PATH.write_text(json.dumps(result))
-        except Exception:
-            pass
+        DUPSCAN_RESULT_PATH.unlink()
 
     from fastapi.responses import RedirectResponse
     return RedirectResponse(url=f"/duplicates?moved={moved}", status_code=303)

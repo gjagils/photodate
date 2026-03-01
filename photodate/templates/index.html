@@ -55,8 +55,24 @@ async function toggleExif(albumRel, checkbox) {
         const data = await resp.json();
         checkbox.checked = data.exif_complete;
 
-        // Show/hide the organize checkbox next to it
+        // Show error if EXIF dates are missing
         const row = checkbox.closest('[data-album]');
+        let errEl = row.querySelector('.exif-error');
+        if (data.error) {
+            if (!errEl) {
+                errEl = document.createElement('span');
+                errEl.className = 'exif-error';
+                errEl.style.cssText = 'color: #e94560; font-size: 0.8em; position: absolute; left: 28px; top: 100%; white-space: nowrap;';
+                row.style.position = 'relative';
+                row.appendChild(errEl);
+            }
+            errEl.textContent = data.error;
+            setTimeout(() => errEl.remove(), 4000);
+        } else if (errEl) {
+            errEl.remove();
+        }
+
+        // Show/hide the organize checkbox next to it
         const orgCheck = row.querySelector('.organize-check');
         if (orgCheck) {
             if (data.exif_complete) {

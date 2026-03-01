@@ -261,7 +261,21 @@ async def organize_bulk(request: Request):
 @app.post("/album/{album_rel:path}/toggle-exif-complete")
 async def toggle_exif_complete(album_rel: str):
     album_data = AlbumData.load(album_rel)
-    album_data.exif_complete = not album_data.exif_complete
+    new_value = not album_data.exif_complete
+
+    # When turning ON, verify all photos actually have an EXIF date
+    if new_value:
+        folder = _find_album(album_rel)
+        if folder:
+            photos = _load_photos(folder)
+            missing = sum(1 for p in photos if not p.original_exif_date)
+            if missing > 0:
+                return JSONResponse({
+                    "exif_complete": False,
+                    "error": f"{missing} van {len(photos)} foto's mist een EXIF-datum",
+                })
+
+    album_data.exif_complete = new_value
     album_data.save()
     return JSONResponse({"exif_complete": album_data.exif_complete})
 

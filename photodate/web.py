@@ -464,7 +464,7 @@ def _build_photos_filename_index() -> set[str]:
 
 
 def _get_icloud_folders(icloud_path: Path) -> list[dict]:
-    """Scan iCloud directory for YYYY/MM folder structure. Returns sorted list."""
+    """Scan iCloud directory for YYYY/MM folder structure (fast, no file counting)."""
     folders = []
     if not icloud_path.exists():
         return folders
@@ -472,35 +472,13 @@ def _get_icloud_folders(icloud_path: Path) -> list[dict]:
         if not year_dir.is_dir() or not year_dir.name.isdigit() or len(year_dir.name) != 4:
             continue
         year = year_dir.name
-        # Check for month subdirs
         has_months = False
         for month_dir in sorted(year_dir.iterdir()):
             if month_dir.is_dir() and month_dir.name.isdigit() and len(month_dir.name) == 2:
                 has_months = True
-                photo_count = sum(
-                    1 for f in month_dir.iterdir()
-                    if f.is_file() and f.suffix.lower() in ICLOUD_EXTENSIONS
-                )
-                if photo_count > 0:
-                    folders.append({
-                        "year": year,
-                        "month": month_dir.name,
-                        "path": month_dir,
-                        "photo_count": photo_count,
-                    })
-        # If no month subdirs, treat year folder itself as a single entry
+                folders.append({"year": year, "month": month_dir.name})
         if not has_months:
-            photo_count = sum(
-                1 for f in year_dir.iterdir()
-                if f.is_file() and f.suffix.lower() in ICLOUD_EXTENSIONS
-            )
-            if photo_count > 0:
-                folders.append({
-                    "year": year,
-                    "month": "00",
-                    "path": year_dir,
-                    "photo_count": photo_count,
-                })
+            folders.append({"year": year, "month": "00"})
     return folders
 
 

@@ -54,7 +54,7 @@
                         <button type="button"
                                 class="btn-secondary"
                                 style="font-size: 0.75em; padding: 0.3rem 0.6rem;"
-                                onclick="toggleNever('{{ album.label }}')">
+                                onclick="toggleNever('{{ album.label }}', this)">
                             nooit verplaatsen
                         </button>
                     </td>
@@ -82,13 +82,12 @@
 </div>
 {% endif %}
 
-{% if never_move %}
-<div class="card" style="opacity: 0.5;">
-    <h2>Nooit verplaatsen ({{ never_move | length }})</h2>
+<div class="card" style="opacity: 0.5; {% if not never_move %}display: none;{% endif %}" id="neverMoveCard">
+    <h2 id="neverMoveTitle">Nooit verplaatsen ({{ never_move | length }})</h2>
     <table>
-        <tbody>
+        <tbody id="neverMoveBody">
             {% for album in never_move %}
-            <tr>
+            <tr data-album="{{ album.label }}" data-photo-count="{{ album.photo_count }}">
                 <td>
                     <a href="/album/{{ album.label }}" style="color: #aaa;">{{ album.label }}</a>
                 </td>
@@ -97,7 +96,7 @@
                     <button type="button"
                             class="btn-secondary"
                             style="font-size: 0.75em; padding: 0.3rem 0.6rem;"
-                            onclick="toggleNever('{{ album.label }}')">
+                            onclick="toggleNever('{{ album.label }}', this)">
                         toch verplaatsen
                     </button>
                 </td>
@@ -106,7 +105,6 @@
         </tbody>
     </table>
 </div>
-{% endif %}
 
 <script>
 function updateActionBar() {
@@ -121,54 +119,121 @@ function updateActionBar() {
     }
 }
 
-async function toggleNever(albumRel) {
-    await fetch(`/album/${encodeURIComponent(albumRel)}/toggle-never-organize`, {
+async function toggleNever(albumRel, btn) {
+    const row = btn.closest('tr');
+    const isInNeverList = row.closest('#neverMoveBody');
+
+    const resp = await fetch(`/album/${encodeURIComponent(albumRel)}/toggle-never-organize`, {
         method: 'POST',
     });
-    location.reload();
+    if (!resp.ok) return;
+
+    const neverCard = document.getElementById('neverMoveCard');
+    const neverBody = document.getElementById('neverMoveBody');
+    const neverTitle = document.getElementById('neverMoveTitle');
+    const albumsHeader = document.querySelector('#organizeForm .card h2');
+    const albumsBody = document.querySelector('#organizeForm .card tbody');
+
+    if (isInNeverList) {
+        // Move from "nooit verplaatsen" → organizable table
+        row.remove();
+        const photoCount = row.dataset.photoCount || '';
+        const newRow = document.createElement('tr');
+        newRow.dataset.album = albumRel;
+        newRow.innerHTML = `
+            <td>
+                <input type="checkbox" class="organize-check" name="albums"
+                       value="${albumRel}" onchange="updateActionBar()" disabled
+                       title="EXIF-data wordt geladen..."
+                       style="width: 18px; height: 18px; accent-color: #4fc3f7; cursor: pointer;">
+            </td>
+            <td><a href="/album/${albumRel}">${albumRel}</a></td>
+            <td style="text-align: right;" class="exif-col"><span style="color: #aaa;">…</span></td>
+            <td style="text-align: right;" class="no-exif-col"><span style="color: #aaa;">…</span></td>
+            <td style="text-align: right;">
+                <button type="button" class="btn-secondary"
+                        style="font-size: 0.75em; padding: 0.3rem 0.6rem;"
+                        onclick="toggleNever('${albumRel}', this)">
+                    nooit verplaatsen
+                </button>
+            </td>`;
+        albumsBody.appendChild(newRow);
+        // Load EXIF counts for this newly added row
+        loadExifForRow(newRow);
+    } else {
+        // Move from organizable → "nooit verplaatsen"
+        const photoCount = row.querySelector('td:nth-child(2) a')?.textContent || albumRel;
+        const checkbox = row.querySelector('.organize-check');
+        if (checkbox?.checked) {
+            checkbox.checked = false;
+            updateActionBar();
+        }
+        row.remove();
+        const newRow = document.createElement('tr');
+        newRow.dataset.album = albumRel;
+        newRow.innerHTML = `
+            <td><a href="/album/${albumRel}" style="color: #aaa;">${albumRel}</a></td>
+            <td style="text-align: right; color: #aaa;">&nbsp;</td>
+            <td style="text-align: right;">
+                <button type="button" class="btn-secondary"
+                        style="font-size: 0.75em; padding: 0.3rem 0.6rem;"
+                        onclick="toggleNever('${albumRel}', this)">
+                    toch verplaatsen
+                </button>
+            </td>`;
+        neverBody.appendChild(newRow);
+        neverCard.style.display = '';
+    }
+
+    // Update counts in headers
+    const neverCount = neverBody.querySelectorAll('tr').length;
+    neverTitle.textContent = `Nooit verplaatsen (${neverCount})`;
+    if (neverCount === 0) neverCard.style.display = 'none';
+
+    const albumCount = albumsBody ? albumsBody.querySelectorAll('tr').length : 0;
+    if (albumsHeader) albumsHeader.textContent = `Albums (${albumCount})`;
 }
 
-// Lazy load EXIF counts (max 3 concurrent)
+async function loadExifForRow(row) {
+    const label = row.dataset.album;
+    try {
+        const resp = await fetch(`/api/album/${encodeURIComponent(label)}/exif-counts`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const exifCol = row.querySelector('.exif-col');
+        const noExifCol = row.querySelector('.no-exif-col');
+        const checkbox = row.querySelector('.organize-check');
+        exifCol.innerHTML = `<span style="color: #4ecca3;">${data.exif_count}</span>`
+            + `<span style="color: #aaa;"> / ${data.exif_count + data.no_exif_count}</span>`;
+        if (data.no_exif_count > 0) {
+            noExifCol.innerHTML = `<span style="color: #f0a500;">${data.no_exif_count}</span>`;
+        } else {
+            noExifCol.innerHTML = `<span style="color: #aaa;">0</span>`;
+        }
+        if (data.exif_count > 0) {
+            checkbox.disabled = false;
+            checkbox.title = 'Selecteer voor organiseren';
+        } else {
+            checkbox.disabled = true;
+            checkbox.title = "Geen foto's met EXIF";
+        }
+    } catch (e) {
+        console.error(`Failed to load EXIF counts for ${label}:`, e);
+    }
+}
+
+// Lazy load EXIF counts for all organizable rows (max 3 concurrent)
 async function loadExifCounts() {
-    const rows = document.querySelectorAll('tr[data-album]');
+    const rows = document.querySelectorAll('#organizeForm tr[data-album]');
     const queue = [...rows];
 
     async function processNext() {
         while (queue.length > 0) {
             const row = queue.shift();
-            const label = row.dataset.album;
-            try {
-                const resp = await fetch(`/api/album/${encodeURIComponent(label)}/exif-counts`);
-                if (!resp.ok) continue;
-                const data = await resp.json();
-
-                const exifCol = row.querySelector('.exif-col');
-                const noExifCol = row.querySelector('.no-exif-col');
-                const checkbox = row.querySelector('.organize-check');
-
-                exifCol.innerHTML = `<span style="color: #4ecca3;">${data.exif_count}</span>`
-                    + `<span style="color: #aaa;"> / ${data.exif_count + data.no_exif_count}</span>`;
-
-                if (data.no_exif_count > 0) {
-                    noExifCol.innerHTML = `<span style="color: #f0a500;">${data.no_exif_count}</span>`;
-                } else {
-                    noExifCol.innerHTML = `<span style="color: #aaa;">0</span>`;
-                }
-
-                if (data.exif_count > 0) {
-                    checkbox.disabled = false;
-                    checkbox.title = 'Selecteer voor organiseren';
-                } else {
-                    checkbox.disabled = true;
-                    checkbox.title = "Geen foto's met EXIF";
-                }
-            } catch (e) {
-                console.error(`Failed to load EXIF counts for ${label}:`, e);
-            }
+            await loadExifForRow(row);
         }
     }
 
-    // Run max 3 workers in parallel
     const workers = [];
     for (let i = 0; i < Math.min(3, queue.length); i++) {
         workers.push(processNext());

@@ -7,7 +7,7 @@
 
 {% if moved %}
 <div class="alert alert-success">
-    <strong>{{ moved }} foto('s) verplaatst</strong> naar _duplicates mappen.
+    <strong>{{ moved }} foto('s) verplaatst</strong> naar _duplicates mappen in de betreffende albums.
 </div>
 {% endif %}
 
@@ -52,6 +52,13 @@
 
 {% if result.groups %}
 <form method="post" action="/duplicates/move">
+    <div class="card" style="position: sticky; top: 0; z-index: 10; border: 1px solid #0f3460;">
+        <button type="submit" class="btn">Verplaats duplicaten naar _duplicates mappen</button>
+        <span style="color: #aaa; font-size: 0.85em; margin-left: 1rem;">
+            Per groep wordt de geselecteerde foto behouden. De rest gaat naar <code>album/_duplicates/</code>.
+        </span>
+    </div>
+
     {% for group in result.groups %}
     <div class="card">
         <div class="group-header" style="display: flex; justify-content: space-between; align-items: center;">
@@ -96,11 +103,6 @@
         {% endfor %}
     </div>
     {% endfor %}
-
-    <div class="actions" style="position: sticky; bottom: 1rem; background: #1a1a2e; padding: 1rem; border-radius: 8px; border: 1px solid #0f3460;">
-        <button type="submit" class="btn">Verplaats duplicaten naar _duplicates mappen</button>
-        <span style="color: #aaa; font-size: 0.85em;">De geselecteerde foto's (radio) worden behouden, de rest wordt verplaatst.</span>
-    </div>
 </form>
 {% else %}
 <div class="card">

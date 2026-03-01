@@ -30,6 +30,32 @@
     </p>
     {% endif %}
 
+    {% if albums_processed %}
+    <div style="margin-top: 1rem;">
+        <h3>Per album</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Album</th>
+                    <th>Verplaatst</th>
+                    <th>Overgeslagen</th>
+                    <th>Map verwijderd</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for a in albums_processed %}
+                <tr>
+                    <td>{{ a.label }}</td>
+                    <td style="color: #4ecca3;">{{ a.moved }}</td>
+                    <td>{{ a.skipped }}</td>
+                    <td>{% if a.removed %}<span class="success">ja</span>{% else %}nee{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
     {% if errors %}
     <div style="margin-top: 1rem;">
         <h3>Fouten</h3>

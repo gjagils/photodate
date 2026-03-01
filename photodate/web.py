@@ -73,11 +73,18 @@ def _get_all_albums() -> list[dict]:
             if photo_count > 0 and dirpath != root:
                 rel = dirpath.relative_to(root)
                 album_data = AlbumData.load(str(rel))
+                parts = rel.parts
+                is_ym = (
+                    len(parts) >= 2
+                    and parts[-2].isdigit() and len(parts[-2]) == 4
+                    and parts[-1].isdigit() and len(parts[-1]) == 2
+                )
                 albums.append({
                     "path": dirpath,
                     "label": str(rel),
                     "photo_count": photo_count,
                     "exif_complete": album_data.exif_complete,
+                    "is_year_month": is_ym,
                 })
     albums.sort(key=lambda x: x["label"])
     return albums
@@ -155,6 +162,96 @@ async def index(request: Request):
         "request": request,
         "albums": albums,
         "photos_roots": roots,
+    })
+
+
+# --- Bulk organize: move multiple albums into YYYY/MM ---
+
+@app.post("/organize-bulk", response_class=HTMLResponse)
+async def organize_bulk(request: Request):
+    """Move photos from multiple albums into YYYY/MM folders."""
+    form = await request.form()
+    album_labels = form.getlist("albums")
+
+    total_moved = 0
+    total_skipped = 0
+    all_errors = []
+    albums_processed = []
+
+    for album_rel in album_labels:
+        folder = _find_album(album_rel)
+        if not folder:
+            all_errors.append(f"{album_rel}: map niet gevonden")
+            continue
+
+        photos_root = _find_photos_root(folder)
+        if not photos_root:
+            all_errors.append(f"{album_rel}: kan foto-root niet vinden")
+            continue
+
+        photos = _load_photos(folder)
+        missing = sum(1 for p in photos if not p.original_exif_date)
+        if missing > 0:
+            all_errors.append(f"{album_rel}: {missing} foto's missen EXIF-datum, overgeslagen")
+            continue
+
+        moved = 0
+        skipped = 0
+        for photo in photos:
+            d = parse_exif_date(photo.original_exif_date)
+            if not d:
+                skipped += 1
+                continue
+
+            dest_dir = photos_root / str(d.year) / f"{d.month:02d}"
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest_path = dest_dir / photo.path.name
+
+            if photo.path.parent == dest_dir:
+                skipped += 1
+                continue
+
+            if dest_path.exists():
+                stem = photo.path.stem
+                suffix = photo.path.suffix
+                counter = 1
+                while dest_path.exists():
+                    dest_path = dest_dir / f"{stem}_{counter}{suffix}"
+                    counter += 1
+
+            try:
+                shutil.move(str(photo.path), str(dest_path))
+                _reindex_synology(dest_path)
+                moved += 1
+            except Exception as e:
+                all_errors.append(f"{album_rel}/{photo.path.name}: {e}")
+
+        # Clean up empty source folder
+        source_empty = not any(folder.iterdir())
+        if source_empty:
+            try:
+                folder.rmdir()
+            except Exception:
+                pass
+
+        total_moved += moved
+        total_skipped += skipped
+        albums_processed.append({
+            "label": album_rel,
+            "moved": moved,
+            "skipped": skipped,
+            "removed": source_empty,
+        })
+
+    return templates.TemplateResponse("organize_done.html", {
+        "request": request,
+        "album_rel": "",
+        "folder_name": f"{len(albums_processed)} albums",
+        "moved_count": total_moved,
+        "skipped_count": total_skipped,
+        "errors": all_errors,
+        "source_removed": False,
+        "albums_processed": albums_processed,
     })
 
 

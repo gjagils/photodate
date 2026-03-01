@@ -1009,6 +1009,13 @@ async def album_context_page(request: Request, album_rel: str):
     album_data = AlbumData.load(album_rel)
     photos = _load_photos(folder)
     missing_exif = sum(1 for p in photos if not p.original_exif_date)
+    # Detect if this album is already a YYYY/MM folder (e.g. "2024/03")
+    parts = Path(album_rel).parts
+    is_year_month = (
+        len(parts) >= 2
+        and parts[-2].isdigit() and len(parts[-2]) == 4
+        and parts[-1].isdigit() and len(parts[-1]) == 2
+    )
     return templates.TemplateResponse("album_context.html", {
         "request": request,
         "album_rel": album_rel,
@@ -1016,4 +1023,5 @@ async def album_context_page(request: Request, album_rel: str):
         "photo_count": len(photos),
         "missing_exif": missing_exif,
         "folder_name": folder.name,
+        "is_year_month": is_year_month,
     })

@@ -5,6 +5,17 @@
     {{ photo_count }} foto's worden verdeeld over {{ group_count }} mappen
 </p>
 
+<form method="post" action="/album/{{ album_rel }}/organize">
+    <div style="position: sticky; top: 0; z-index: 10; background: #1a1a2e; padding: 1rem 0; border-bottom: 1px solid #0f3460; margin-bottom: 1rem;">
+        <div class="actions" style="margin: 0;">
+            <button type="submit" onclick="this.disabled=true; this.textContent='Bezig met verplaatsen...'; this.form.submit();">
+                Verplaats {{ photo_count }} foto's
+            </button>
+            <a href="/album/{{ album_rel }}" class="btn btn-secondary">Annuleren</a>
+        </div>
+    </div>
+</form>
+
 <div class="card">
     <h2>Doelstructuur</h2>
     <p style="color: #aaa; margin-bottom: 1rem;">
@@ -31,13 +42,4 @@
     </div>
     {% endfor %}
 </div>
-
-<form method="post" action="/album/{{ album_rel }}/organize">
-    <div class="actions">
-        <button type="submit" onclick="this.disabled=true; this.textContent='Bezig met verplaatsen...'; this.form.submit();">
-            Verplaats {{ photo_count }} foto's
-        </button>
-        <a href="/album/{{ album_rel }}" class="btn btn-secondary">Annuleren</a>
-    </div>
-</form>
 {% endblock %}

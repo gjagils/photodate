@@ -7,13 +7,37 @@
     <h2>Fotoalbums</h2>
     <div class="folder-list">
         {% for album in albums %}
-        <a href="/album/{{ album.label }}" style="display: flex; justify-content: space-between; align-items: center;">
-            <span>{{ album.label }}</span>
-            <span style="font-size: 0.8em; color: #aaa;">{{ album.photo_count }} foto's</span>
-        </a>
+        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+            <input type="checkbox"
+                   id="exif_{{ loop.index }}"
+                   {% if album.exif_complete %}checked{% endif %}
+                   onchange="toggleExif('{{ album.label }}', this)"
+                   title="EXIF datums compleet"
+                   style="width: 18px; height: 18px; accent-color: #4ecca3; cursor: pointer; flex-shrink: 0;">
+            <a href="/album/{{ album.label }}" style="display: flex; justify-content: space-between; align-items: center; flex: 1;">
+                <span>{{ album.label }}</span>
+                <span style="font-size: 0.8em; color: #aaa;">{{ album.photo_count }} foto's</span>
+            </a>
+        </div>
         {% else %}
         <p style="color: #aaa;">Geen mappen met foto's gevonden.</p>
         {% endfor %}
     </div>
 </div>
+
+<script>
+async function toggleExif(albumRel, checkbox) {
+    try {
+        const resp = await fetch(`/album/${encodeURIComponent(albumRel)}/toggle-exif-complete`, {
+            method: 'POST',
+        });
+        if (!resp.ok) throw new Error('Toggle failed');
+        const data = await resp.json();
+        checkbox.checked = data.exif_complete;
+    } catch (e) {
+        checkbox.checked = !checkbox.checked;  // revert on error
+        console.error('Toggle exif complete failed:', e);
+    }
+}
+</script>
 {% endblock %}

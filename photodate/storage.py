@@ -59,6 +59,8 @@ class AlbumData:
     photo_groups: dict[str, int] = field(default_factory=dict)  # filename -> group_id
     # Perceptual hashes for duplicate detection
     photo_hashes: dict[str, str] = field(default_factory=dict)  # filename -> phash hex
+    # Whether all photos have EXIF dates (user-managed flag)
+    exif_complete: bool = False
 
     def save(self) -> None:
         STORAGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -86,4 +88,5 @@ class AlbumData:
             photo_confidence=data.get("photo_confidence", {}),
             photo_groups=data.get("photo_groups", {}),
             photo_hashes=data.get("photo_hashes", {}),
+            exif_complete=data.get("exif_complete", False),
         )

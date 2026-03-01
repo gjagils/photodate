@@ -61,7 +61,7 @@ def _get_photos_roots() -> list[Path]:
 
 
 def _get_all_albums() -> list[dict]:
-    """Return list of album dicts with path, label, photo_count."""
+    """Return list of album dicts with path, label, photo_count, exif_complete."""
     albums = []
     for root in _get_photos_roots():
         if not root.exists():
@@ -72,10 +72,12 @@ def _get_all_albums() -> list[dict]:
             photo_count = sum(1 for f in filenames if Path(f).suffix.lower() in EXTENSIONS)
             if photo_count > 0 and dirpath != root:
                 rel = dirpath.relative_to(root)
+                album_data = AlbumData.load(str(rel))
                 albums.append({
                     "path": dirpath,
                     "label": str(rel),
                     "photo_count": photo_count,
+                    "exif_complete": album_data.exif_complete,
                 })
     albums.sort(key=lambda x: x["label"])
     return albums
@@ -154,6 +156,16 @@ async def index(request: Request):
         "albums": albums,
         "photos_roots": roots,
     })
+
+
+# --- Toggle: EXIF complete flag ---
+
+@app.post("/album/{album_rel:path}/toggle-exif-complete")
+async def toggle_exif_complete(album_rel: str):
+    album_data = AlbumData.load(album_rel)
+    album_data.exif_complete = not album_data.exif_complete
+    album_data.save()
+    return JSONResponse({"exif_complete": album_data.exif_complete})
 
 
 # --- Page: Global Settings (family members) ---

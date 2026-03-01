@@ -306,49 +306,88 @@ async def organize_execute_bulk(request: Request):
     })
 
 
-@app.post("/organize-niet-zelf-genomen", response_class=HTMLResponse)
-async def organize_niet_zelf_genomen(request: Request):
-    """Move photos without EXIF to /nietzelfgenomen/ folder."""
-    form = await request.form()
-    album_labels = form.getlist("albums")
-
-    total_moved = 0
-    all_errors = []
+@app.get("/organize-no-exif", response_class=HTMLResponse)
+async def organize_no_exif_page(request: Request):
+    """Show photos without EXIF per album with thumbnails and checkboxes."""
+    album_labels = request.query_params.getlist("albums")
+    albums_with_photos = []
 
     for album_rel in album_labels:
         folder = _find_album(album_rel)
         if not folder:
             continue
+        photos = _load_photos(folder)
+        no_exif_photos = [p for p in photos if not p.original_exif_date]
+        if no_exif_photos:
+            albums_with_photos.append({
+                "label": album_rel,
+                "photos": [{"filename": p.path.name} for p in no_exif_photos],
+            })
+
+    total_photos = sum(len(a["photos"]) for a in albums_with_photos)
+    return templates.TemplateResponse("organize_no_exif.html", {
+        "request": request,
+        "albums": albums_with_photos,
+        "total_photos": total_photos,
+    })
+
+
+@app.post("/organize-niet-zelf-genomen", response_class=HTMLResponse)
+async def organize_niet_zelf_genomen(request: Request):
+    """Move selected photos to /nietzelfgenomen/ folder."""
+    form = await request.form()
+    photo_keys = form.getlist("photos")  # values like "album_rel/filename"
+
+    total_moved = 0
+    all_errors = []
+    cleaned_folders: set[str] = set()
+
+    for photo_key in photo_keys:
+        # Split into album_rel and filename
+        sep = photo_key.rfind("/")
+        if sep < 0:
+            continue
+        album_rel = photo_key[:sep]
+        filename = photo_key[sep + 1:]
+
+        folder = _find_album(album_rel)
+        if not folder:
+            all_errors.append(f"{photo_key}: map niet gevonden")
+            continue
+
+        source = folder / filename
+        if not source.is_file():
+            all_errors.append(f"{photo_key}: bestand niet gevonden")
+            continue
 
         photos_root = _find_photos_root(folder)
         if not photos_root:
+            all_errors.append(f"{photo_key}: kan foto-root niet vinden")
             continue
 
         nzg_dir = photos_root / "nietzelfgenomen"
         nzg_dir.mkdir(parents=True, exist_ok=True)
 
-        photos = _load_photos(folder)
-        for photo in photos:
-            if photo.original_exif_date:
-                continue  # Skip photos that have EXIF
+        dest_path = nzg_dir / filename
+        if dest_path.exists():
+            stem = source.stem
+            suffix = source.suffix
+            counter = 1
+            while dest_path.exists():
+                dest_path = nzg_dir / f"{stem}_{counter}{suffix}"
+                counter += 1
 
-            dest_path = nzg_dir / photo.path.name
-            if dest_path.exists():
-                stem = photo.path.stem
-                suffix = photo.path.suffix
-                counter = 1
-                while dest_path.exists():
-                    dest_path = nzg_dir / f"{stem}_{counter}{suffix}"
-                    counter += 1
+        try:
+            shutil.move(str(source), str(dest_path))
+            total_moved += 1
+            cleaned_folders.add(album_rel)
+        except Exception as e:
+            all_errors.append(f"{photo_key}: {e}")
 
-            try:
-                shutil.move(str(photo.path), str(dest_path))
-                total_moved += 1
-            except Exception as e:
-                all_errors.append(f"{album_rel}/{photo.path.name}: {e}")
-
-        # Clean up empty source folder
-        if folder.exists():
+    # Clean up empty source folders
+    for album_rel in cleaned_folders:
+        folder = _find_album(album_rel)
+        if folder and folder.exists():
             real_remaining = [f for f in folder.iterdir() if f.name not in SKIP_DIRS]
             if not real_remaining:
                 try:

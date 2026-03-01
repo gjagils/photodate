@@ -75,18 +75,12 @@
     <h2>Foto's zonder EXIF-datum</h2>
     <p style="color: #aaa; margin-bottom: 1rem;">
         {{ no_exif_count }} foto's zonder EXIF-datum zijn achtergelaten in de originele mappen.
-        Wil je deze verplaatsen naar de <code>nietzelfgenomen</code> map?
+        Bekijk ze en kies welke je wilt verplaatsen naar <code>nietzelfgenomen</code>.
     </p>
-    <form method="post" action="/organize-niet-zelf-genomen">
-        {% for a in albums_processed %}
-        {% if a.no_exif > 0 %}
-        <input type="hidden" name="albums" value="{{ a.label }}">
-        {% endif %}
-        {% endfor %}
-        <button type="submit" onclick="this.disabled=true; this.textContent='Bezig met verplaatsen...'; this.form.submit();">
-            Verplaats {{ no_exif_count }} foto's naar nietzelfgenomen
-        </button>
-    </form>
+    <a href="/organize-no-exif?{% for a in albums_processed %}{% if a.no_exif > 0 %}albums={{ a.label | urlencode }}&{% endif %}{% endfor %}"
+       class="btn">
+        Bekijk {{ no_exif_count }} foto's zonder EXIF
+    </a>
 </div>
 {% endif %}
 

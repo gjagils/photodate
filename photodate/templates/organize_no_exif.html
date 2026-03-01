@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Foto's zonder EXIF-datum</h1>
+<p style="color: #aaa; margin-bottom: 1.5rem;">
+    {{ total_photos }} foto's zonder EXIF-datum. Vink aan welke je wilt verplaatsen naar
+    <code>nietzelfgenomen</code>. De rest blijft staan voor EXIF-toekenning.
+</p>
+
+<form method="post" action="/organize-niet-zelf-genomen" id="noExifForm">
+    <div style="position: sticky; top: 0; z-index: 10; background: #1a1a2e; padding: 1rem 0; border-bottom: 1px solid #0f3460; margin-bottom: 1rem;">
+        <div class="actions" style="margin: 0;">
+            <button type="submit" onclick="this.disabled=true; this.textContent='Bezig met verplaatsen...'; this.form.submit();">
+                Verplaats geselecteerde naar nietzelfgenomen
+            </button>
+            <span id="selectedCount" style="color: #aaa; align-self: center;">{{ total_photos }} van {{ total_photos }} geselecteerd</span>
+        </div>
+    </div>
+
+    {% for album in albums %}
+    <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+            <h2>{{ album.label }} <span style="color: #aaa; font-size: 0.7em; font-weight: normal;">({{ album.photos | length }} foto's)</span></h2>
+            <div style="display: flex; gap: 0.5rem;">
+                <button type="button" class="btn-secondary" style="font-size: 0.75em; padding: 0.3rem 0.6rem;"
+                        onclick="toggleAlbum('{{ album.label }}', true)">alles aan</button>
+                <button type="button" class="btn-secondary" style="font-size: 0.75em; padding: 0.3rem 0.6rem;"
+                        onclick="toggleAlbum('{{ album.label }}', false)">alles uit</button>
+            </div>
+        </div>
+        <div class="photo-grid" data-album="{{ album.label }}">
+            {% for photo in album.photos %}
+            <label class="photo-card" style="cursor: pointer; position: relative;">
+                <input type="checkbox" name="photos" value="{{ album.label }}/{{ photo.filename }}"
+                       checked onchange="updateCount()"
+                       style="position: absolute; top: 8px; left: 8px; width: 20px; height: 20px; accent-color: #e94560; z-index: 1;">
+                <img src="/thumb/{{ album.label }}/__file__/{{ photo.filename }}?size=200"
+                     loading="lazy" alt="{{ photo.filename }}"
+                     onerror="this.style.display='none'">
+                <div class="info">
+                    <p style="font-size: 0.75em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                       title="{{ photo.filename }}">{{ photo.filename }}</p>
+                </div>
+            </label>
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+</form>
+
+<div class="actions">
+    <a href="/organize" class="btn btn-secondary">Terug naar Organiseer</a>
+</div>
+
+<script>
+const totalPhotos = {{ total_photos }};
+
+function updateCount() {
+    const checked = document.querySelectorAll('#noExifForm input[name="photos"]:checked').length;
+    document.getElementById('selectedCount').textContent = `${checked} van ${totalPhotos} geselecteerd`;
+}
+
+function toggleAlbum(albumLabel, state) {
+    const grid = document.querySelector(`.photo-grid[data-album="${albumLabel}"]`);
+    grid.querySelectorAll('input[name="photos"]').forEach(cb => cb.checked = state);
+    updateCount();
+}
+</script>
+{% endblock %}

@@ -74,10 +74,11 @@ def _get_all_albums() -> list[dict]:
                 rel = dirpath.relative_to(root)
                 album_data = AlbumData.load(str(rel))
                 parts = rel.parts
+                # Only YYYY/MM directly in root (2 parts), not nested like MobileBackup/iPhone/2017/07
                 is_ym = (
-                    len(parts) >= 2
-                    and parts[-2].isdigit() and len(parts[-2]) == 4
-                    and parts[-1].isdigit() and len(parts[-1]) == 2
+                    len(parts) == 2
+                    and parts[0].isdigit() and len(parts[0]) == 4
+                    and parts[1].isdigit() and len(parts[1]) == 2
                 )
                 albums.append({
                     "path": dirpath,
@@ -1106,12 +1107,12 @@ async def album_context_page(request: Request, album_rel: str):
     album_data = AlbumData.load(album_rel)
     photos = _load_photos(folder)
     missing_exif = sum(1 for p in photos if not p.original_exif_date)
-    # Detect if this album is already a YYYY/MM folder (e.g. "2024/03")
+    # Only YYYY/MM directly in root (2 parts), not nested like MobileBackup/iPhone/2017/07
     parts = Path(album_rel).parts
     is_year_month = (
-        len(parts) >= 2
-        and parts[-2].isdigit() and len(parts[-2]) == 4
-        and parts[-1].isdigit() and len(parts[-1]) == 2
+        len(parts) == 2
+        and parts[0].isdigit() and len(parts[0]) == 4
+        and parts[1].isdigit() and len(parts[1]) == 2
     )
     return templates.TemplateResponse("album_context.html", {
         "request": request,

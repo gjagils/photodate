@@ -418,18 +418,40 @@ async def toggle_never_organize(album_rel: str):
 
 # --- iCloud photo matching ---
 
+import time as _time
+
+_photos_index_cache: set[str] | None = None
+_photos_index_timestamp: float = 0
+_photos_index_lock = threading.Lock()
+_PHOTOS_INDEX_TTL = 300  # Cache for 5 minutes
+
+
 def _build_photos_filename_index() -> set[str]:
-    """Build a set of all photo filenames across all PHOTOS_PATHS (fast, no EXIF)."""
-    index: set[str] = set()
-    for root in _get_photos_roots():
-        if not root.exists():
-            continue
-        for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-            for f in filenames:
-                if Path(f).suffix.lower() in EXTENSIONS:
-                    index.add(f.lower())
-    return index
+    """Build a set of all photo filenames across all PHOTOS_PATHS (cached 5 min, thread-safe)."""
+    global _photos_index_cache, _photos_index_timestamp
+    now = _time.time()
+    if _photos_index_cache is not None and (now - _photos_index_timestamp) < _PHOTOS_INDEX_TTL:
+        return _photos_index_cache
+
+    with _photos_index_lock:
+        # Double-check after acquiring lock
+        now = _time.time()
+        if _photos_index_cache is not None and (now - _photos_index_timestamp) < _PHOTOS_INDEX_TTL:
+            return _photos_index_cache
+
+        index: set[str] = set()
+        for root in _get_photos_roots():
+            if not root.exists():
+                continue
+            for dirpath, dirnames, filenames in os.walk(root):
+                dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+                for f in filenames:
+                    if Path(f).suffix.lower() in EXTENSIONS:
+                        index.add(f.lower())
+        _photos_index_cache = index
+        _photos_index_timestamp = now
+        logger.info(f"Photos filename index built: {len(index)} files")
+        return index
 
 
 def _get_icloud_folders(icloud_path: Path) -> list[dict]:
@@ -487,6 +509,10 @@ async def icloud_dashboard(request: Request):
         })
 
     folders = _get_icloud_folders(icloud_path)
+
+    # Pre-build filename index in background so first API call is fast
+    threading.Thread(target=_build_photos_filename_index, daemon=True).start()
+
     return templates.TemplateResponse("icloud.html", {
         "request": request,
         "folders": folders,

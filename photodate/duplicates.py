@@ -1,5 +1,6 @@
 """Perceptual hashing and duplicate detection for photos."""
 import logging
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -34,21 +35,12 @@ def compute_phash(path: Path) -> str:
     return str(imagehash.phash(img, hash_size=16))
 
 
-def find_duplicates(
+def _hash_photos(
     photo_paths: list[Path],
-    cached_hashes: dict[str, str] | None = None,
-    threshold: int = 8,
+    cached_hashes: dict[str, str],
     progress_callback=None,
-) -> tuple[list[DuplicateGroup], dict[str, str]]:
-    """Find duplicate photos using perceptual hashing.
-
-    Returns (duplicate_groups, updated_hash_cache).
-    progress_callback(current, total) is called periodically if provided.
-    """
-    if cached_hashes is None:
-        cached_hashes = {}
-
-    # Compute hashes (use cache where available)
+) -> tuple[list[DuplicatePhoto], dict[str, str]]:
+    """Compute hashes for photos, using cache where available."""
     photos: list[DuplicatePhoto] = []
     updated_cache: dict[str, str] = {}
     total = len(photo_paths)
@@ -59,11 +51,14 @@ def find_duplicates(
         fname = path.name
         try:
             # Use cached hash or compute new one
-            if fname in cached_hashes:
+            cache_key = str(path)
+            if cache_key in cached_hashes:
+                hash_str = cached_hashes[cache_key]
+            elif fname in cached_hashes:
                 hash_str = cached_hashes[fname]
             else:
                 hash_str = compute_phash(path)
-            updated_cache[fname] = hash_str
+            updated_cache[cache_key] = hash_str
 
             img = Image.open(path)
             w, h = img.size
@@ -80,7 +75,26 @@ def find_duplicates(
         except Exception as e:
             logger.warning(f"Could not process {path}: {e}")
 
-    # Compare all pairs
+    return photos, updated_cache
+
+
+def _group_exact(photos: list[DuplicatePhoto]) -> list[DuplicateGroup]:
+    """Group photos by exact hash match — O(n)."""
+    hash_map: dict[str, list[DuplicatePhoto]] = defaultdict(list)
+    for photo in photos:
+        hash_map[photo.phash].append(photo)
+
+    groups = []
+    group_id = 0
+    for members in hash_map.values():
+        if len(members) > 1:
+            group_id += 1
+            groups.append(DuplicateGroup(id=group_id, photos=members))
+    return groups
+
+
+def _group_threshold(photos: list[DuplicatePhoto], threshold: int) -> list[DuplicateGroup]:
+    """Group photos by hamming distance threshold — O(n²), only for small sets."""
     n = len(photos)
     used = set()
     groups: list[DuplicateGroup] = []
@@ -104,5 +118,31 @@ def find_duplicates(
             group_id += 1
             groups.append(DuplicateGroup(id=group_id, photos=members))
             used.add(i)
+
+    return groups
+
+
+def find_duplicates(
+    photo_paths: list[Path],
+    cached_hashes: dict[str, str] | None = None,
+    threshold: int = 8,
+    progress_callback=None,
+) -> tuple[list[DuplicateGroup], dict[str, str]]:
+    """Find duplicate photos using perceptual hashing.
+
+    Returns (duplicate_groups, updated_hash_cache).
+    For large sets (>5000 photos), uses exact hash matching (O(n)).
+    For smaller sets, uses threshold-based matching (O(n²)).
+    """
+    if cached_hashes is None:
+        cached_hashes = {}
+
+    photos, updated_cache = _hash_photos(photo_paths, cached_hashes, progress_callback)
+
+    # Choose matching strategy based on set size
+    if len(photos) > 5000:
+        groups = _group_exact(photos)
+    else:
+        groups = _group_threshold(photos, threshold)
 
     return groups, updated_cache

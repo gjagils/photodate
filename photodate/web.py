@@ -525,7 +525,7 @@ def _run_global_dupscan():
 
 
 @app.get("/duplicates", response_class=HTMLResponse)
-async def global_duplicates(request: Request):
+async def global_duplicates(request: Request, moved: int = 0):
     result = None
     if DUPSCAN_RESULT_PATH.exists():
         try:
@@ -545,6 +545,7 @@ async def global_duplicates(request: Request):
         "request": request,
         "result": result,
         "scan_running": scan_running,
+        "moved": moved,
     })
 
 
@@ -575,6 +576,39 @@ async def global_duplicates_status():
         return JSONResponse(json.loads(DUPSCAN_STATUS_PATH.read_text()))
     except Exception:
         return JSONResponse({"running": False})
+
+
+@app.post("/duplicates/move")
+async def global_duplicates_move(request: Request):
+    form = await request.form()
+    moved = 0
+
+    for key, value in form.items():
+        if key.startswith("move_"):
+            filepath = Path(value)  # Full path stored in form value
+            if filepath.is_file():
+                dup_folder = filepath.parent / "_duplicates"
+                dup_folder.mkdir(exist_ok=True)
+                shutil.move(str(filepath), str(dup_folder / filepath.name))
+                moved += 1
+
+    # Update cached results: remove moved files from groups
+    if DUPSCAN_RESULT_PATH.exists():
+        try:
+            result = json.loads(DUPSCAN_RESULT_PATH.read_text())
+            moved_paths = {v for k, v in form.items() if k.startswith("move_")}
+            for group in result.get("groups", []):
+                group["photos"] = [
+                    p for p in group["photos"] if p["path"] not in moved_paths
+                ]
+            result["groups"] = [g for g in result["groups"] if len(g["photos"]) > 1]
+            result["total_groups"] = len(result["groups"])
+            DUPSCAN_RESULT_PATH.write_text(json.dumps(result))
+        except Exception:
+            pass
+
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url=f"/duplicates?moved={moved}", status_code=303)
 
 
 # --- Page: Google Photos verification ---

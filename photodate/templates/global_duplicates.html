@@ -5,6 +5,12 @@
     Scan alle albums op dubbele of bijna-identieke foto's.
 </p>
 
+{% if moved %}
+<div class="alert alert-success">
+    <strong>{{ moved }} foto('s) verplaatst</strong> naar _duplicates mappen.
+</div>
+{% endif %}
+
 <div class="card" id="scan-card">
     <h2>Scan</h2>
     <div id="scan-idle" {% if scan_running %}style="display:none"{% endif %}>
@@ -42,37 +48,57 @@
 </div>
 
 {% if result.groups %}
-{% for group in result.groups %}
-<div class="card">
-    <div class="group-header">
-        <strong>Groep {{ group.id }}</strong> — {{ group.photos | length }} foto's
-    </div>
-    <table>
-        <tr>
-            <th>Foto</th>
-            <th>Album</th>
-            <th>Bestandsnaam</th>
-            <th>Afmetingen</th>
-            <th>Grootte</th>
-            <th>EXIF-datum</th>
-        </tr>
+<form method="post" action="/duplicates/move">
+    {% for group in result.groups %}
+    <div class="card">
+        <div class="group-header" style="display: flex; justify-content: space-between; align-items: center;">
+            <span><strong>Groep {{ group.id }}</strong> — {{ group.photos | length }} foto's</span>
+        </div>
+        <table>
+            <tr>
+                <th style="width: 50px;">Houden</th>
+                <th>Foto</th>
+                <th>Album</th>
+                <th>Bestandsnaam</th>
+                <th>Afmetingen</th>
+                <th>Grootte</th>
+                <th>EXIF-datum</th>
+            </tr>
+            {% for photo in group.photos %}
+            <tr>
+                <td>
+                    <input type="radio" name="keep_{{ group.id }}" value="{{ photo.path }}"
+                           {% if loop.first %}checked{% endif %}
+                           onchange="updateMoveFields({{ group.id }})">
+                </td>
+                <td>
+                    <img src="/thumb/{{ photo.album }}/__file__/{{ photo.filename }}?size=80"
+                         style="width: 60px; height: 60px; object-fit: cover; border-radius: 4px;"
+                         onerror="this.style.display='none'">
+                </td>
+                <td><a href="/album/{{ photo.album }}">{{ photo.album }}</a></td>
+                <td style="font-size: 0.85em;">{{ photo.filename }}</td>
+                <td>{{ photo.width }}x{{ photo.height }}</td>
+                <td>{{ "%.1f"|format(photo.size_bytes / 1024 / 1024) }} MB</td>
+                <td>{{ photo.exif_date or "—" }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+        <!-- Hidden fields for files to move (updated by JS) -->
         {% for photo in group.photos %}
-        <tr>
-            <td>
-                <img src="/thumb/{{ photo.album }}/__file__/{{ photo.filename }}?size=80"
-                     style="width: 60px; height: 60px; object-fit: cover; border-radius: 4px;"
-                     onerror="this.style.display='none'">
-            </td>
-            <td><a href="/album/{{ photo.album }}">{{ photo.album }}</a></td>
-            <td style="font-size: 0.85em;">{{ photo.filename }}</td>
-            <td>{{ photo.width }}x{{ photo.height }}</td>
-            <td>{{ "%.1f"|format(photo.size_bytes / 1024 / 1024) }} MB</td>
-            <td>{{ photo.exif_date or "—" }}</td>
-        </tr>
+        <input type="hidden" class="move-field-{{ group.id }}"
+               name="move_{{ group.id }}_{{ loop.index }}"
+               value="{{ photo.path }}"
+               {% if loop.first %}disabled{% endif %}>
         {% endfor %}
-    </table>
-</div>
-{% endfor %}
+    </div>
+    {% endfor %}
+
+    <div class="actions" style="position: sticky; bottom: 1rem; background: #1a1a2e; padding: 1rem; border-radius: 8px; border: 1px solid #0f3460;">
+        <button type="submit" class="btn">Verplaats duplicaten naar _duplicates mappen</button>
+        <span style="color: #aaa; font-size: 0.85em;">De geselecteerde foto's (radio) worden behouden, de rest wordt verplaatst.</span>
+    </div>
+</form>
 {% else %}
 <div class="card">
     <p class="success" style="font-size: 1.1em;">Geen duplicaten gevonden!</p>
@@ -82,6 +108,20 @@
 
 <script>
 let polling = {{ 'true' if scan_running else 'false' }};
+
+function updateMoveFields(groupId) {
+    const radios = document.querySelectorAll(`input[name="keep_${groupId}"]`);
+    const fields = document.querySelectorAll(`.move-field-${groupId}`);
+    const keepValue = document.querySelector(`input[name="keep_${groupId}"]:checked`).value;
+
+    fields.forEach(field => {
+        if (field.value === keepValue) {
+            field.disabled = true;  // Don't move the kept file
+        } else {
+            field.disabled = false;  // Move this file
+        }
+    });
+}
 
 function startScan() {
     fetch('/duplicates/scan', { method: 'POST' })

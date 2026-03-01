@@ -24,7 +24,10 @@
         {% endif %}
     </div>
     <div id="scan-progress" {% if not scan_running %}style="display:none"{% endif %}>
-        <p id="scan-phase" style="color: #4fc3f7; margin-bottom: 0.5rem;">Bezig...</p>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+            <p id="scan-phase" style="color: #4fc3f7;">Bezig...</p>
+            <button onclick="cancelScan()" class="btn btn-secondary" style="padding: 0.3rem 0.8rem; font-size: 0.85em;">Annuleren</button>
+        </div>
         <div style="background: #1a1a2e; border-radius: 8px; overflow: hidden; height: 24px; margin-bottom: 0.5rem;">
             <div id="scan-bar" style="background: #4fc3f7; height: 100%; width: 0%; transition: width 0.3s; display: flex; align-items: center; justify-content: center; font-size: 0.8em; font-weight: bold; min-width: 30px;"></div>
         </div>
@@ -121,6 +124,11 @@ function updateMoveFields(groupId) {
             field.disabled = false;  // Move this file
         }
     });
+}
+
+function cancelScan() {
+    fetch('/duplicates/cancel', { method: 'POST' })
+        .then(() => window.location.reload());
 }
 
 function startScan() {

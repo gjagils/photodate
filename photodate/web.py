@@ -35,6 +35,24 @@ SKIP_DIRS = {"@eaDir", "#recycle", ".git", "_duplicates"}
 SYNOINDEX = Path("/usr/syno/bin/synoindex")
 
 
+# --- Clean up stale "running" status files on startup ---
+def _reset_stale_status():
+    for status_file in STORAGE_DIR.glob("*_status.json"):
+        try:
+            data = json.loads(status_file.read_text())
+            if data.get("running"):
+                data["running"] = False
+                data["error"] = "Afgebroken door herstart"
+                status_file.write_text(json.dumps(data))
+        except Exception:
+            pass
+
+try:
+    _reset_stale_status()
+except Exception:
+    pass
+
+
 # --- Helpers ---
 
 def _get_photos_roots() -> list[Path]:
@@ -576,6 +594,13 @@ async def global_duplicates_status():
         return JSONResponse(json.loads(DUPSCAN_STATUS_PATH.read_text()))
     except Exception:
         return JSONResponse({"running": False})
+
+
+@app.post("/duplicates/cancel")
+async def global_duplicates_cancel():
+    if DUPSCAN_STATUS_PATH.exists():
+        DUPSCAN_STATUS_PATH.write_text(json.dumps({"running": False, "error": "Geannuleerd"}))
+    return JSONResponse({"ok": True})
 
 
 @app.post("/duplicates/move")

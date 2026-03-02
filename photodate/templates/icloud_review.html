@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>iCloud: {{ year }}{% if month != "00" %}/{{ month }}{% endif %}</h1>
-<p style="color: #aaa; margin-bottom: 1.5rem;">
+<p style="color: #aaa; margin-bottom: 1.5rem;" id="subtitle">
     {{ total_unmatched }} foto's niet gevonden in je archief.
     Selecteer foto's en kies een actie.
 </p>
@@ -11,16 +11,15 @@
     <p class="success">Alle foto's zijn afgehandeld!</p>
 </div>
 {% else %}
-<form method="post" action="/icloud/{{ year }}/{{ month }}/action" id="reviewForm">
-    <input type="hidden" name="action" id="actionField" value="">
+<div id="reviewArea">
     <div style="position: sticky; top: 0; z-index: 10; background: #1a1a2e; padding: 1rem 0; border-bottom: 1px solid #0f3460; margin-bottom: 1rem;">
         <div class="actions" style="margin: 0; flex-wrap: wrap;">
-            <button type="button" style="background: #4ecca3;"
-                    onclick="submitAction('keep', this, 'Bezig met kopiëren...')">
+            <button type="button" style="background: #4ecca3;" id="btnKeep"
+                    onclick="submitAction('keep')">
                 Behouden (kopieer naar archief)
             </button>
-            <button type="button" class="btn-secondary"
-                    onclick="submitAction('dismiss', this, 'Bezig...')">
+            <button type="button" class="btn-secondary" id="btnDismiss"
+                    onclick="submitAction('dismiss')">
                 Niet belangrijk
             </button>
             <span style="color: #aaa; align-self: center;" id="selectedCount">{{ total_unmatched }} van {{ total_unmatched }} geselecteerd</span>
@@ -33,9 +32,9 @@
         </div>
     </div>
 
-    <div class="photo-grid">
+    <div class="photo-grid" id="photoGrid">
         {% for photo in photos %}
-        <label class="photo-card" style="cursor: pointer; position: relative;">
+        <label class="photo-card" style="cursor: pointer; position: relative;" data-filename="{{ photo }}">
             <input type="checkbox" name="photos" value="{{ photo }}"
                    checked onchange="updateCount()"
                    style="position: absolute; top: 8px; left: 8px; width: 20px; height: 20px; accent-color: #4fc3f7; z-index: 1;">
@@ -49,7 +48,11 @@
         </label>
         {% endfor %}
     </div>
-</form>
+</div>
+
+<div class="card" style="display: none;" id="allDoneCard">
+    <p class="success">Alle foto's zijn afgehandeld!</p>
+</div>
 {% endif %}
 
 <div class="actions" style="margin-top: 1rem;">
@@ -57,23 +60,108 @@
 </div>
 
 <script>
-const totalPhotos = {{ total_unmatched }};
+const year = {{ year|tojson }};
+const month = {{ month|tojson }};
+
+function getChecked() {
+    return document.querySelectorAll('#photoGrid input[name="photos"]:checked');
+}
+
+function getAllCards() {
+    return document.querySelectorAll('#photoGrid .photo-card');
+}
 
 function updateCount() {
-    const checked = document.querySelectorAll('#reviewForm input[name="photos"]:checked').length;
-    document.getElementById('selectedCount').textContent = `${checked} van ${totalPhotos} geselecteerd`;
+    const checked = getChecked().length;
+    const total = getAllCards().length;
+    document.getElementById('selectedCount').textContent = `${checked} van ${total} geselecteerd`;
 }
 
 function toggleAll(state) {
-    document.querySelectorAll('#reviewForm input[name="photos"]').forEach(cb => cb.checked = state);
+    document.querySelectorAll('#photoGrid input[name="photos"]').forEach(cb => cb.checked = state);
     updateCount();
 }
 
-function submitAction(action, btn, loadingText) {
-    document.getElementById('actionField').value = action;
-    btn.disabled = true;
-    btn.textContent = loadingText;
-    document.getElementById('reviewForm').submit();
+async function submitAction(action) {
+    const checked = getChecked();
+    if (checked.length === 0) return;
+
+    const btnKeep = document.getElementById('btnKeep');
+    const btnDismiss = document.getElementById('btnDismiss');
+    const activeBtn = action === 'keep' ? btnKeep : btnDismiss;
+
+    // Disable both buttons during request
+    btnKeep.disabled = true;
+    btnDismiss.disabled = true;
+    const origText = activeBtn.textContent;
+    activeBtn.textContent = action === 'keep' ? 'Bezig met kopiëren...' : 'Bezig...';
+
+    const photos = [];
+    const cards = [];
+    checked.forEach(cb => {
+        const card = cb.closest('.photo-card');
+        photos.push(card.dataset.filename);
+        cards.push(card);
+    });
+
+    try {
+        const resp = await fetch(`/api/icloud/${year}/${month}/action`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action, photos}),
+        });
+        const data = await resp.json();
+
+        if (!resp.ok) {
+            alert(data.error || 'Er ging iets mis');
+            btnKeep.disabled = false;
+            btnDismiss.disabled = false;
+            activeBtn.textContent = origText;
+            return;
+        }
+
+        // Fade out and remove processed photo cards
+        cards.forEach(card => {
+            card.style.transition = 'opacity 0.3s, transform 0.3s';
+            card.style.opacity = '0';
+            card.style.transform = 'scale(0.9)';
+            setTimeout(() => card.remove(), 300);
+        });
+
+        // Brief success message
+        activeBtn.textContent = `${data.processed} verwerkt`;
+
+        if (data.errors && data.errors.length > 0) {
+            console.error('Fouten:', data.errors);
+            alert(`${data.processed} verwerkt, ${data.errors.length} fouten.\n${data.errors.join('\n')}`);
+        }
+
+        // Re-enable and update after animation
+        setTimeout(() => {
+            btnKeep.disabled = false;
+            btnDismiss.disabled = false;
+            activeBtn.textContent = origText;
+            updateCount();
+
+            // Check if all photos are done
+            const remaining = getAllCards().length;
+            if (remaining === 0) {
+                document.getElementById('reviewArea').style.display = 'none';
+                document.getElementById('allDoneCard').style.display = '';
+                document.getElementById('subtitle').textContent = 'Alle foto\'s zijn afgehandeld!';
+            } else {
+                document.getElementById('subtitle').textContent =
+                    `${remaining} foto's niet gevonden in je archief. Selecteer foto's en kies een actie.`;
+            }
+        }, 350);
+
+    } catch (e) {
+        console.error('Fout bij actie:', e);
+        btnKeep.disabled = false;
+        btnDismiss.disabled = false;
+        activeBtn.textContent = origText;
+        alert('Er ging iets mis bij het verwerken.');
+    }
 }
 </script>
 {% endblock %}

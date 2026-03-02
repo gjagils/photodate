@@ -106,5 +106,12 @@ async function loadCounts() {
 }
 
 loadCounts();
+
+// Reload counts when returning from review page (back/forward navigation)
+window.addEventListener('pageshow', function(event) {
+    if (event.persisted) {
+        loadCounts();
+    }
+});
 </script>
 {% endblock %}

@@ -530,6 +530,14 @@ def _build_photos_filename_index() -> set[str]:
         return index
 
 
+def _add_to_photos_index(filenames: list[str]) -> None:
+    """Add filenames to the cached index (avoids full rebuild after copy)."""
+    global _photos_index_cache
+    if _photos_index_cache is not None:
+        for f in filenames:
+            _photos_index_cache.add(f.lower())
+
+
 def _get_icloud_folders(icloud_path: Path) -> list[dict]:
     """Scan iCloud directory for YYYY/MM folder structure (fast, no file counting)."""
     folders = []
@@ -699,25 +707,28 @@ async def icloud_review(request: Request, year: str, month: str):
     })
 
 
-@app.post("/icloud/{year}/{month}/action", response_class=HTMLResponse)
+@app.post("/api/icloud/{year}/{month}/action")
 async def icloud_action(request: Request, year: str, month: str):
-    """Process keep/dismiss actions for iCloud photos."""
-    form = await request.form()
-    action = form.get("action", "")
-    photo_names = form.getlist("photos")
+    """Process keep/dismiss actions for iCloud photos (JSON API)."""
+    body = await request.json()
+    action = body.get("action", "")
+    photo_names = body.get("photos", [])
 
     if not photo_names:
-        return RedirectResponse(url=f"/icloud/{year}/{month}/review", status_code=303)
+        return JSONResponse({"error": "geen foto's geselecteerd"}, status_code=400)
 
     settings = GlobalSettings.load()
     if not settings.icloud_photos_path:
-        return HTMLResponse("iCloud pad niet ingesteld", status_code=400)
+        return JSONResponse({"error": "iCloud pad niet ingesteld"}, status_code=400)
 
     icloud_path = Path(settings.icloud_photos_path)
     if month == "00":
         folder = icloud_path / year
     else:
         folder = icloud_path / year / month
+
+    processed = 0
+    errors = []
 
     if action == "dismiss":
         # Mark as not important
@@ -727,17 +738,18 @@ async def icloud_action(request: Request, year: str, month: str):
         existing.update(photo_names)
         icloud_data.dismissed[key] = sorted(existing)
         icloud_data.save()
+        processed = len(photo_names)
 
     elif action == "keep":
         # Copy to YYYY/MM in user's photos
         photos_roots = _get_photos_roots()
         if not photos_roots:
-            return HTMLResponse("Geen foto-mappen ingesteld", status_code=400)
+            return JSONResponse({"error": "Geen foto-mappen ingesteld"}, status_code=400)
         photos_root = photos_roots[0]
         dest_dir = photos_root / year / (month if month != "00" else "01")
         dest_dir.mkdir(parents=True, exist_ok=True)
 
-        errors = []
+        copied_filenames = []
         for fname in photo_names:
             source = folder / fname
             if not source.is_file():
@@ -754,10 +766,16 @@ async def icloud_action(request: Request, year: str, month: str):
             try:
                 shutil.copy2(str(source), str(dest_path))
                 _reindex_synology(dest_path)
+                copied_filenames.append(fname)
+                processed += 1
             except Exception as e:
                 errors.append(f"{fname}: {e}")
 
-    return RedirectResponse(url=f"/icloud/{year}/{month}/review", status_code=303)
+        # Update the cached filename index so counts immediately reflect the change
+        if copied_filenames:
+            _add_to_photos_index(copied_filenames)
+
+    return JSONResponse({"processed": processed, "errors": errors})
 
 
 # --- Page: Global Settings (family members) ---

@@ -1,4 +1,7 @@
+import logging
 import os
+import shutil
+import traceback
 from datetime import date
 from io import BytesIO
 from pathlib import Path
@@ -14,6 +17,8 @@ from .exif import read_exif_date, write_exif_date
 from .faces import detect_faces_in_album
 from .models import PhotoInfo
 from .storage import AlbumData, FamilyMember, GlobalSettings, Milestone
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Photodate")
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
@@ -193,12 +198,25 @@ async def album_analyze(request: Request, album_rel: str):
     album_data = AlbumData.load(album_rel)
     settings = GlobalSettings.load()
 
-    # Face detection
-    face_results = detect_faces_in_album([p.path for p in photos])
+    # Face detection (non-fatal: skip if library unavailable or crashes)
+    face_results: dict = {"clusters": [], "per_photo": {}}
+    try:
+        face_results = detect_faces_in_album([p.path for p in photos])
+    except Exception as exc:
+        logger.warning("Gezichtsdetectie mislukt (wordt overgeslagen): %s", exc)
 
     # AI date analysis
-    client = openai.OpenAI()
-    album_data = analyze_album_full(photos, album_data, settings, client)
+    try:
+        client = openai.OpenAI()
+        album_data = analyze_album_full(photos, album_data, settings, client)
+    except Exception as exc:
+        logger.error("AI-analyse mislukt: %s\n%s", exc, traceback.format_exc())
+        error_msg = str(exc)
+        return HTMLResponse(
+            f"<h1>Analysefout</h1><pre>{error_msg}</pre>"
+            f"<a href='/album/{album_rel}'>Terug</a>",
+            status_code=500,
+        )
 
     return templates.TemplateResponse("results.html", {
         "request": request,
@@ -262,10 +280,43 @@ async def apply_dates(request: Request, album_rel: str):
     if not folder:
         return HTMLResponse("Map niet gevonden", status_code=404)
 
+    album_data = AlbumData.load(album_rel)
+
+    # Persist "niet van mij" marks
+    not_mine = [
+        key[len("not_mine_"):]
+        for key, value in form.items()
+        if key.startswith("not_mine_") and value == "1"
+    ]
+    album_data.not_mine_photos = not_mine
+    album_data.save()
+
+    # Copy not-mine photos to {root}/nietzelfgenomen/{album_rel}/
+    copied = 0
+    if not_mine:
+        root = _find_album(album_rel)
+        # Determine the photos root this album lives under
+        for photos_root in _get_photos_roots():
+            if root and str(root).startswith(str(photos_root)):
+                dest_dir = photos_root / "nietzelfgenomen" / album_rel
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                for fname in not_mine:
+                    src = folder / fname
+                    if src.is_file():
+                        dest = dest_dir / fname
+                        if not dest.exists():
+                            shutil.copy2(src, dest)
+                            copied += 1
+                break
+
     count = 0
+    skipped = 0
     for key, value in form.items():
         if key.startswith("date_") and value:
             filename = key[5:]
+            if filename in not_mine:
+                skipped += 1
+                continue
             filepath = folder / filename
             if filepath.is_file():
                 try:
@@ -280,4 +331,6 @@ async def apply_dates(request: Request, album_rel: str):
         "album_rel": album_rel,
         "folder_name": folder.name,
         "count": count,
+        "skipped": skipped,
+        "copied": copied,
     })

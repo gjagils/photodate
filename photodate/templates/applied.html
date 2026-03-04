@@ -3,6 +3,7 @@
 <h1>Datums toegepast</h1>
 <div class="card">
     <p class="success">{{ count }} foto('s) bijgewerkt in {{ folder_name }}.</p>
+    {% if skipped %}<p style="color: #aaa; margin-top: 0.3rem;">{{ skipped }} foto('s) overgeslagen (niet zelf genomen){% if copied %} — {{ copied }} gekopieerd naar <code>nietzelfgenomen/{{ album_rel }}/</code>{% endif %}.</p>{% endif %}
     <p style="color: #aaa; margin-top: 0.5rem;">Er is een backup gemaakt van elk origineel bestand (.bak).</p>
     <br>
     <a href="/album/{{ album_rel }}" class="btn">Terug naar album</a>

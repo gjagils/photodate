@@ -1,5 +1,6 @@
 import base64
 import json
+import logging
 import re
 from datetime import date
 from io import BytesIO
@@ -9,6 +10,8 @@ from PIL import Image
 
 from .models import DateEstimate, PhotoInfo
 from .storage import AlbumData, GlobalSettings
+
+logger = logging.getLogger(__name__)
 
 MAX_IMAGE_SIZE = 1024
 BATCH_SIZE = 10
@@ -135,6 +138,7 @@ def analyze_batch(
     )
 
     response_text = response.choices[0].message.content
+    logger.debug("OpenAI response (first 500 chars): %s", response_text[:500])
     # Strip markdown code fences if present
     response_text = re.sub(r"^```(?:json)?\n?", "", response_text)
     response_text = re.sub(r"\n?```$", "", response_text)
@@ -155,15 +159,24 @@ def analyze_album_full(
     all_results: list[dict] = []
     for i in range(0, total, BATCH_SIZE):
         batch = photos[i : i + BATCH_SIZE]
-        results = analyze_batch(batch, context, client, i, total)
+        try:
+            results = analyze_batch(batch, context, client, i, total)
+        except Exception as exc:
+            logger.error("Batch %d-%d mislukt: %s", i, i + len(batch), exc)
+            raise
+        if len(results) != len(batch):
+            logger.warning(
+                "Batch %d-%d: %d foto's verstuurd, %d resultaten ontvangen",
+                i, i + len(batch), len(batch), len(results),
+            )
         all_results.extend(results)
 
-    # Store results in album data
+    # Store results in album data — match by position (zip stops at shortest)
     for photo, result in zip(photos, all_results):
         fname = photo.path.name
-        album_data.photo_dates[fname] = result["estimated_date"]
-        album_data.photo_reasoning[fname] = result["reasoning"]
-        album_data.photo_confidence[fname] = result["confidence"]
+        album_data.photo_dates[fname] = result.get("estimated_date", "")
+        album_data.photo_reasoning[fname] = result.get("reasoning", "")
+        album_data.photo_confidence[fname] = result.get("confidence", "low")
         album_data.photo_groups[fname] = result.get("group", 0)
 
     album_data.save()

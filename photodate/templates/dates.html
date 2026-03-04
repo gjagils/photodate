@@ -3,19 +3,31 @@
 <h1>Datums aanpassen</h1>
 <p style="color: #aaa; margin-bottom: 1.5rem;">Album: {{ album_rel }}</p>
 
+<div style="display: flex; gap: 1.5rem; margin-bottom: 1rem; flex-wrap: wrap;">
+    <label style="cursor: pointer; user-select: none;">
+        <input type="checkbox" id="filter-no-exif"> Alleen foto's zonder EXIF-datum tonen
+    </label>
+    <label style="cursor: pointer; user-select: none;">
+        <input type="checkbox" id="filter-hide-not-mine"> Niet zelf genomen verbergen
+    </label>
+</div>
+
 <form method="post" action="/album/{{ album_rel }}/apply">
     <table>
         <tr>
-            <th style="width: 160px;">Foto</th>
+            <th style="width: 130px;">Foto</th>
             <th>Bestand</th>
             <th>Huidige EXIF</th>
             <th>Voorgestelde datum</th>
             <th>Zekerheid</th>
             <th>Redenering</th>
+            <th title="Niet zelf genomen — sla datum schrijven over">Niet van mij</th>
         </tr>
         {% for photo in photos %}
         {% set fname = photo.path.name %}
-        <tr>
+        {% set is_not_mine = fname in album_data.not_mine_photos %}
+        <tr class="photo-row{% if is_not_mine %} not-mine{% endif %}"
+            data-has-exif="{{ '1' if photo.original_exif_date else '0' }}">
             <td>
                 <img src="/thumb/{{ album_rel }}/__file__/{{ fname }}?size=120"
                      style="width: 120px; height: 80px; object-fit: cover; border-radius: 4px;">
@@ -25,7 +37,8 @@
             <td>
                 <input type="date" name="date_{{ fname }}"
                        value="{{ album_data.photo_dates.get(fname, '') }}"
-                       style="width: 160px;">
+                       style="width: 160px;"
+                       {% if is_not_mine %}disabled{% endif %}>
             </td>
             <td>
                 {% set conf = album_data.photo_confidence.get(fname, '') %}
@@ -34,13 +47,60 @@
             <td style="font-size: 0.85rem; color: #aaa;">
                 {{ album_data.photo_reasoning.get(fname, '-') }}
             </td>
+            <td style="text-align: center;">
+                <input type="checkbox" name="not_mine_{{ fname }}"
+                       value="1"
+                       class="not-mine-cb"
+                       {% if is_not_mine %}checked{% endif %}
+                       title="Niet zelf genomen — datum wordt overgeslagen bij toepassen">
+            </td>
         </tr>
         {% endfor %}
     </table>
 
     <div class="actions">
-        <button type="submit">Alle datums toepassen</button>
+        <button type="submit">Datums toepassen</button>
         <a href="/album/{{ album_rel }}" class="btn btn-secondary">Terug naar context</a>
     </div>
 </form>
+
+<style>
+tr.not-mine td { opacity: 0.4; }
+tr.not-mine td:last-child { opacity: 1; }
+</style>
+
+<script>
+// Toggle dim + disable date input when "niet van mij" is checked
+document.querySelectorAll('.not-mine-cb').forEach(cb => {
+    cb.addEventListener('change', () => {
+        const row = cb.closest('tr');
+        const dateInput = row.querySelector('input[type="date"]');
+        if (cb.checked) {
+            row.classList.add('not-mine');
+            if (dateInput) dateInput.disabled = true;
+        } else {
+            row.classList.remove('not-mine');
+            if (dateInput) dateInput.disabled = false;
+        }
+    });
+});
+
+// Filter: geen EXIF
+document.getElementById('filter-no-exif').addEventListener('change', applyFilters);
+// Filter: verberg niet-van-mij
+document.getElementById('filter-hide-not-mine').addEventListener('change', applyFilters);
+
+function applyFilters() {
+    const onlyNoExif = document.getElementById('filter-no-exif').checked;
+    const hideNotMine = document.getElementById('filter-hide-not-mine').checked;
+    document.querySelectorAll('tr.photo-row').forEach(row => {
+        const hasExif = row.dataset.hasExif === '1';
+        const isNotMine = row.classList.contains('not-mine');
+        let hide = false;
+        if (onlyNoExif && hasExif) hide = true;
+        if (hideNotMine && isNotMine) hide = true;
+        row.style.display = hide ? 'none' : '';
+    });
+}
+</script>
 {% endblock %}

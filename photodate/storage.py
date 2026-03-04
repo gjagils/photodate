@@ -55,6 +55,7 @@ class AlbumData:
     photo_reasoning: dict[str, str] = field(default_factory=dict)  # filename -> reason
     photo_confidence: dict[str, str] = field(default_factory=dict)  # filename -> level
     photo_groups: dict[str, int] = field(default_factory=dict)  # filename -> group_id
+    not_mine_photos: list[str] = field(default_factory=list)  # filenames not taken by user
 
     def save(self) -> None:
         STORAGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -81,4 +82,5 @@ class AlbumData:
             photo_reasoning=data.get("photo_reasoning", {}),
             photo_confidence=data.get("photo_confidence", {}),
             photo_groups=data.get("photo_groups", {}),
+            not_mine_photos=data.get("not_mine_photos", []),
         )

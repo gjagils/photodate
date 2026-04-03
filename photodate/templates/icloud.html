@@ -18,10 +18,13 @@
 {% else %}
 <div class="card">
     <h2>Overzicht per jaar</h2>
-    <div style="margin-bottom: 1rem; display: flex; gap: 0.75rem; flex-wrap: wrap;">
+    <div style="margin-bottom: 1rem; display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center;">
         <button class="btn-secondary" onclick="collapseAll()" style="font-size: 0.85em; padding: 0.3rem 0.75rem;">▶ Alles inklappen</button>
         <button class="btn-secondary" onclick="expandAll()" style="font-size: 0.85em; padding: 0.3rem 0.75rem;">▼ Alles uitklappen</button>
-        <button class="btn-secondary" onclick="collapseSafe()" style="font-size: 0.85em; padding: 0.3rem 0.75rem;" id="btnCollapseSafe" title="Klapt jaren in die 100% gematcht zijn">▶ Veilige jaren inklappen</button>
+        <button class="btn-secondary" onclick="collapseSafe()" style="font-size: 0.85em; padding: 0.3rem 0.75rem;" title="Klapt jaren in die 100% gematcht zijn">▶ Veilige jaren inklappen</button>
+        <span style="color: #aaa; font-size: 0.8em;">|</span>
+        <button onclick="archiveMov()" id="btnArchiveMov" style="font-size: 0.85em; padding: 0.3rem 0.75rem; background: #0f3460;">⬇ Alle .mov archiveren</button>
+        <span id="movResult" style="font-size: 0.85em; color: #aaa;"></span>
     </div>
     <table>
         <thead>
@@ -198,6 +201,30 @@ async function loadAllCounts() {
             })
             .catch(() => {});
     }
+}
+
+async function archiveMov() {
+    const btn = document.getElementById('btnArchiveMov');
+    const result = document.getElementById('movResult');
+    btn.disabled = true;
+    btn.textContent = '⏳ Bezig…';
+    result.textContent = '';
+    try {
+        const resp = await fetch('/api/icloud/archive-mov', { method: 'POST' });
+        const data = await resp.json();
+        if (resp.ok) {
+            result.style.color = '#4ecca3';
+            result.textContent = data.copied + ' gekopieerd, ' + data.skipped + ' al aanwezig' + (data.errors ? ', ' + data.errors + ' fouten' : '');
+        } else {
+            result.style.color = '#e94560';
+            result.textContent = data.error || 'fout';
+        }
+    } catch (e) {
+        result.style.color = '#e94560';
+        result.textContent = 'Netwerkfout';
+    }
+    btn.disabled = false;
+    btn.textContent = '⬇ Alle .mov archiveren';
 }
 
 loadAllCounts();

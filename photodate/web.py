@@ -730,6 +730,55 @@ async def synology_month_count(year: str, month: str):
     return JSONResponse({"count": count})
 
 
+@app.post("/api/icloud/archive-mov")
+async def icloud_archive_mov():
+    """Copy all .mov files from iCloud folder to Synology YYYY/MM, skip if already there."""
+    settings = GlobalSettings.load()
+    if not settings.icloud_photos_path:
+        return JSONResponse({"error": "geen iCloud-pad ingesteld"}, status_code=400)
+
+    icloud_path = Path(settings.icloud_photos_path)
+    photos_roots = _get_photos_roots()
+    if not photos_roots:
+        return JSONResponse({"error": "geen foto-mappen ingesteld"}, status_code=400)
+    photos_root = photos_roots[0]
+
+    copied = skipped = errors = 0
+
+    for year_dir in sorted(icloud_path.iterdir()):
+        if not year_dir.is_dir() or not year_dir.name.isdigit() or len(year_dir.name) != 4:
+            continue
+        year = year_dir.name
+
+        # Walk month subdirs and root of year dir
+        sources: list[tuple[Path, str, str]] = []  # (file, year, month)
+        for entry in year_dir.iterdir():
+            if entry.is_dir() and entry.name.isdigit() and len(entry.name) == 2:
+                for f in entry.iterdir():
+                    if f.is_file() and f.suffix.lower() == ".mov":
+                        sources.append((f, year, entry.name))
+            elif entry.is_file() and entry.suffix.lower() == ".mov":
+                sources.append((entry, year, "01"))
+
+        for filepath, yr, mo in sources:
+            dest_dir = photos_root / yr / mo
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest = dest_dir / filepath.name
+            if dest.exists():
+                skipped += 1
+                continue
+            try:
+                shutil.copy2(str(filepath), str(dest))
+                _reindex_synology(dest)
+                _add_to_photos_index([filepath.name])
+                copied += 1
+            except Exception as e:
+                logger.warning("archive-mov error %s: %s", filepath, e)
+                errors += 1
+
+    return JSONResponse({"copied": copied, "skipped": skipped, "errors": errors})
+
+
 @app.get("/icloud-thumb/{year}/{month}/{filename}")
 async def icloud_thumbnail(year: str, month: str, filename: str, size: int = 150):
     """Serve thumbnail for an iCloud photo."""

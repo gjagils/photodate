@@ -24,8 +24,8 @@ class Milestone:
 @dataclass
 class GlobalSettings:
     family_members: list[FamilyMember] = field(default_factory=list)
-    google_credentials_path: str = ""  # Path to Google OAuth2 credentials JSON
     icloud_photos_path: str = ""  # Path to iCloud photos directory
+    google_download_path: str = ""  # Path to Google Photos Takeout download directory
 
     def save(self) -> None:
         STORAGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -40,8 +40,8 @@ class GlobalSettings:
         data = json.loads(path.read_text())
         return cls(
             family_members=[FamilyMember(**m) for m in data.get("family_members", [])],
-            google_credentials_path=data.get("google_credentials_path", ""),
             icloud_photos_path=data.get("icloud_photos_path", ""),
+            google_download_path=data.get("google_download_path", ""),
         )
 
 

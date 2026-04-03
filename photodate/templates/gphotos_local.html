@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Google Photos verwerken</h1>
+<p style="color: #aaa; margin-bottom: 1.5rem;">
+    Vergelijk je Google Photos download met het Synology-archief. Duplicaten worden verwijderd, nieuwe foto's worden toegevoegd aan YYYY/MM.
+</p>
+
+{% if no_path %}
+<div class="card">
+    <p style="color: #f0a500;">
+        Geen Google Photos map ingesteld. Ga naar <a href="/settings">Instellingen</a>.
+    </p>
+</div>
+{% elif not years %}
+<div class="card">
+    <p style="color: #aaa;">Geen foto's gevonden in de Google Photos map.</p>
+</div>
+{% else %}
+<div class="card">
+    <h2>Overzicht</h2>
+    <p style="color: #aaa; margin-bottom: 1rem; font-size: 0.9em;">
+        Telling wordt geladen — dit kan even duren bij grote mappen.
+    </p>
+    <table id="countsTable">
+        <thead>
+            <tr>
+                <th>Jaar</th>
+                <th style="text-align: right;">Totaal</th>
+                <th style="text-align: right;">Al aanwezig op Synology</th>
+                <th style="text-align: right;">Nieuw (toe te voegen)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for yr in years %}
+            <tr data-year="{{ yr.year }}">
+                <td>{{ yr.year }}</td>
+                <td style="text-align: right;" class="col-total"><span style="color: #aaa;">…</span></td>
+                <td style="text-align: right;" class="col-matched"><span style="color: #aaa;">…</span></td>
+                <td style="text-align: right;" class="col-unmatched"><span style="color: #aaa;">…</span></td>
+            </tr>
+            {% endfor %}
+            <tr style="font-weight: bold; border-top: 2px solid #0f3460;" id="totalRow">
+                <td>Totaal</td>
+                <td style="text-align: right;" id="grandTotal">…</td>
+                <td style="text-align: right;" id="grandMatched">…</td>
+                <td style="text-align: right;" id="grandUnmatched">…</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="card" id="actionCard" style="display: none;">
+    <h2>Verwerken</h2>
+    <p style="margin-bottom: 1rem;">
+        Dit zal:
+    </p>
+    <ul style="color: #aaa; margin-bottom: 1.5rem; line-height: 1.8;">
+        <li>Foto's die al op de Synology staan → <span style="color: #e94560;">verwijderen</span> uit de Google Photos map</li>
+        <li>Nieuwe foto's → <span style="color: #4ecca3;">verplaatsen</span> naar YYYY/MM in het hoofdarchief</li>
+    </ul>
+    <div class="actions">
+        <button id="processBtn" onclick="startProcess()">Verwerken starten</button>
+    </div>
+    <div id="processResult" style="margin-top: 1rem; display: none;"></div>
+</div>
+{% endif %}
+
+<script>
+let grandTotal = 0, grandMatched = 0, grandUnmatched = 0;
+let countsLoaded = false;
+
+async function loadCounts() {
+    const resp = await fetch('/api/gphotos-local/counts');
+    if (!resp.ok) return;
+    const data = await resp.json();
+
+    const rows = document.querySelectorAll('#countsTable tr[data-year]');
+    rows.forEach(row => {
+        const year = row.dataset.year;
+        const yr = data[year];
+        if (!yr) {
+            row.querySelector('.col-total').textContent = '0';
+            row.querySelector('.col-matched').textContent = '0';
+            row.querySelector('.col-unmatched').textContent = '0';
+            return;
+        }
+        row.querySelector('.col-total').textContent = yr.total;
+        row.querySelector('.col-matched').innerHTML = '<span style="color: #4ecca3;">' + yr.matched + '</span>';
+        row.querySelector('.col-unmatched').innerHTML = yr.unmatched > 0
+            ? '<span style="color: #f0a500; font-weight: bold;">' + yr.unmatched + '</span>'
+            : '<span style="color: #4ecca3;">0</span>';
+        grandTotal += yr.total;
+        grandMatched += yr.matched;
+        grandUnmatched += yr.unmatched;
+    });
+
+    document.getElementById('grandTotal').textContent = grandTotal;
+    document.getElementById('grandMatched').innerHTML = '<span style="color: #4ecca3;">' + grandMatched + '</span>';
+    document.getElementById('grandUnmatched').innerHTML = grandUnmatched > 0
+        ? '<span style="color: #f0a500; font-weight: bold;">' + grandUnmatched + '</span>'
+        : '<span style="color: #4ecca3;">0</span>';
+
+    if (grandTotal > 0) {
+        document.getElementById('actionCard').style.display = '';
+    }
+    countsLoaded = true;
+}
+
+async function startProcess() {
+    if (!confirm('Weet je het zeker? Duplicaten worden permanent verwijderd uit de Google Photos map.')) return;
+    const btn = document.getElementById('processBtn');
+    btn.disabled = true;
+    btn.textContent = 'Bezig…';
+
+    const resp = await fetch('/api/gphotos-local/process', { method: 'POST' });
+    const result = await resp.json();
+
+    const div = document.getElementById('processResult');
+    div.style.display = '';
+    if (resp.ok) {
+        div.innerHTML = '<p style="color: #4ecca3; font-weight: bold;">Klaar!</p>'
+            + '<p>Verwijderd (duplicaten): <strong>' + result.deleted + '</strong></p>'
+            + '<p>Verplaatst naar archief: <strong>' + result.moved + '</strong></p>'
+            + (result.errors > 0 ? '<p style="color: #e94560;">Fouten: ' + result.errors + '</p>' : '');
+    } else {
+        div.innerHTML = '<p style="color: #e94560;">Fout: ' + (result.error || 'onbekend') + '</p>';
+    }
+    btn.textContent = 'Opnieuw verwerken';
+    btn.disabled = false;
+}
+
+loadCounts();
+</script>
+{% endblock %}

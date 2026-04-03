@@ -24,10 +24,6 @@ from .duplicates import find_duplicates
 from .exif import read_exif_date, write_exif_date, parse_exif_date
 from .faces import detect_faces_in_album
 from .models import PhotoInfo
-from .gphotos import (
-    get_oauth_flow, load_credentials, save_credentials,
-    get_service, list_all_media_items, match_local_to_google,
-)
 from .storage import AlbumData, FamilyMember, GlobalSettings, ICloudData, Milestone, STORAGE_DIR
 
 logger = logging.getLogger(__name__)
@@ -169,8 +165,7 @@ async def thumbnail(album_rel: str, filename: str, size: int = 150):
 async def index(request: Request):
     albums = _get_all_albums()
     roots = _get_photos_roots()
-    return templates.TemplateResponse("index.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "index.html", {
         "albums": albums,
         "photos_roots": roots,
     })
@@ -195,8 +190,7 @@ async def organize_page(request: Request):
         else:
             organizable.append(album)
 
-    return templates.TemplateResponse("organize.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "organize.html", {
         "organizable": organizable,
         "already_organized": already_organized,
         "never_move": never_move,
@@ -301,8 +295,7 @@ async def organize_execute_bulk(request: Request):
             "removed": source_empty,
         })
 
-    return templates.TemplateResponse("organize_done.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "organize_done.html", {
         "folder_name": f"{len(albums_processed)} albums",
         "moved_count": total_moved,
         "skipped_count": total_skipped,
@@ -331,8 +324,7 @@ async def organize_no_exif_page(request: Request):
             })
 
     total_photos = sum(len(a["photos"]) for a in albums_with_photos)
-    return templates.TemplateResponse("organize_no_exif.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "organize_no_exif.html", {
         "albums": albums_with_photos,
         "total_photos": total_photos,
     })
@@ -401,8 +393,7 @@ async def organize_niet_zelf_genomen(request: Request):
                 except Exception:
                     pass
 
-    return templates.TemplateResponse("organize_done.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "organize_done.html", {
         "folder_name": "niet zelf genomen",
         "moved_count": total_moved,
         "skipped_count": 0,
@@ -564,8 +555,7 @@ async def icloud_dashboard(request: Request):
     icloud_path = Path(settings.icloud_photos_path) if settings.icloud_photos_path else None
 
     if not icloud_path or not icloud_path.exists():
-        return templates.TemplateResponse("icloud.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "icloud.html", {
             "folders": [],
             "no_path": True,
         })
@@ -581,8 +571,7 @@ async def icloud_dashboard(request: Request):
     # Pre-build filename index in background so first API call is fast
     threading.Thread(target=_build_photos_filename_index, daemon=True).start()
 
-    return templates.TemplateResponse("icloud.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "icloud.html", {
         "years": years_list,
         "no_path": False,
     })
@@ -752,8 +741,7 @@ async def icloud_review(request: Request, year: str, month: str):
     # Only show unmatched (not in user photos AND not dismissed)
     unmatched = [f for f in icloud_files if f.lower() not in index and f not in dismissed_set]
 
-    return templates.TemplateResponse("icloud_review.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "icloud_review.html", {
         "year": year,
         "month": month,
         "photos": unmatched,
@@ -837,10 +825,8 @@ async def icloud_action(request: Request, year: str, month: str):
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request):
     settings = GlobalSettings.load()
-    return templates.TemplateResponse("settings.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "settings.html", {
         "settings": settings,
-        "google_connected": load_credentials() is not None,
     })
 
 
@@ -857,31 +843,14 @@ async def settings_save(request: Request):
             members.append(FamilyMember(name=name, birthdate=birthdate, notes=notes))
         i += 1
 
-    # Handle Google credentials file upload
-    old_settings = GlobalSettings.load()
-    google_creds_path = old_settings.google_credentials_path
-
-    creds_file = form.get("google_credentials")
-    if creds_file and hasattr(creds_file, "read"):
-        STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-        dest = STORAGE_DIR / "google_credentials.json"
-        content = await creds_file.read()
-        if content:
-            dest.write_bytes(content)
-            google_creds_path = str(dest)
-
-    icloud_photos_path = form.get("icloud_photos_path", "").strip()
-
     settings = GlobalSettings(
         family_members=members,
-        google_credentials_path=google_creds_path,
-        icloud_photos_path=icloud_photos_path,
+        icloud_photos_path=form.get("icloud_photos_path", "").strip(),
+        google_download_path=form.get("google_download_path", "").strip(),
     )
     settings.save()
-    return templates.TemplateResponse("settings.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "settings.html", {
         "settings": settings,
-        "google_connected": load_credentials() is not None,
         "saved": True,
     })
 
@@ -895,8 +864,7 @@ async def date_review_page(request: Request, album_rel: str):
         return HTMLResponse("Map niet gevonden", status_code=404)
     photos = _load_photos(folder)
     album_data = AlbumData.load(album_rel)
-    return templates.TemplateResponse("dates.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "dates.html", {
         "album_rel": album_rel,
         "photos": photos,
         "album_data": album_data,
@@ -938,8 +906,7 @@ async def album_analyze(request: Request, album_rel: str):
             status_code=500,
         )
 
-    return templates.TemplateResponse("results.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "results.html", {
         "album_rel": album_rel,
         "photos": photos,
         "album_data": album_data,
@@ -966,8 +933,7 @@ async def save_face_labels(request: Request, album_rel: str):
     # Redirect to date review page
     folder = _find_album(album_rel)
     photos = _load_photos(folder)
-    return templates.TemplateResponse("dates.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "dates.html", {
         "album_rel": album_rel,
         "photos": photos,
         "album_data": album_data,
@@ -1001,8 +967,7 @@ async def album_context_save(request: Request, album_rel: str):
 
     folder = _find_album(album_rel)
     photos = _load_photos(folder)
-    return templates.TemplateResponse("album_context.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "album_context.html", {
         "album_rel": album_rel,
         "album_data": album_data,
         "photo_count": len(photos),
@@ -1037,8 +1002,7 @@ async def apply_dates(request: Request, album_rel: str):
                 except (ValueError, Exception):
                     pass
 
-    return templates.TemplateResponse("applied.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "applied.html", {
         "album_rel": album_rel,
         "folder_name": folder.name,
         "count": count,
@@ -1076,8 +1040,7 @@ async def album_duplicates(request: Request, album_rel: str):
             if f.is_file() and f.suffix.lower() in EXTENSIONS
         )
 
-    return templates.TemplateResponse("duplicates.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "duplicates.html", {
         "album_rel": album_rel,
         "folder_name": folder.name,
         "groups": groups,
@@ -1249,8 +1212,7 @@ async def global_duplicates(request: Request, moved: int = 0):
         except Exception:
             pass
 
-    return templates.TemplateResponse("global_duplicates.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "global_duplicates.html", {
         "result": result,
         "scan_running": scan_running,
         "moved": moved,
@@ -1327,217 +1289,138 @@ async def global_duplicates_move(request: Request):
     return RedirectResponse(url=f"/duplicates?moved={moved}", status_code=303)
 
 
-# --- Page: Google Photos verification ---
+# --- Page: Google Photos local (Takeout download) ---
 
-VERIFY_STATUS_PATH = STORAGE_DIR / "verify_status.json"
-VERIFY_RESULT_PATH = STORAGE_DIR / "verify_result.json"
-_verify_lock = threading.Lock()
+GOOGLE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".mp4", ".mov", ".gif", ".webp"}
 
 
-def _update_verify_status(phase: str, detail: str = "", progress: int = 0, total: int = 0):
-    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-    VERIFY_STATUS_PATH.write_text(json.dumps({
-        "running": True,
-        "phase": phase,
-        "detail": detail,
-        "progress": progress,
-        "total": total,
-    }))
-
-
-def _run_verify_scan():
-    """Background task: scan local photos and match against Google Photos."""
-    try:
-        _update_verify_status("local", "Lokale foto's scannen...")
-        creds = load_credentials()
-        if not creds:
-            VERIFY_STATUS_PATH.write_text(json.dumps({"running": False, "error": "Niet geautoriseerd"}))
-            return
-
-        service = get_service(creds)
-        local_photos = []
-        # First count files for progress
-        all_files = []
-        for root in _get_photos_roots():
-            if not root.exists():
+def _scan_google_folder(folder: Path) -> dict[str, list[str]]:
+    """Scan Google download folder recursively, group file paths by YYYY/MM from EXIF or path."""
+    by_month: dict[str, list[str]] = {}
+    for dirpath, dirnames, filenames in os.walk(folder):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        for fname in filenames:
+            if Path(fname).suffix.lower() not in GOOGLE_EXTENSIONS:
                 continue
-            for dirpath, dirnames, filenames in os.walk(root):
-                dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-                for fname in filenames:
-                    filepath = Path(dirpath) / fname
-                    if filepath.suffix.lower() in EXTENSIONS:
-                        all_files.append(filepath)
-
-        total_files = len(all_files)
-        for i, filepath in enumerate(all_files):
-            if i % 100 == 0:
-                _update_verify_status("local", f"{i}/{total_files} foto's gescand", i, total_files)
-            fname = filepath.name
-            exif_date = read_exif_date(filepath)
-            try:
-                img = Image.open(filepath)
-                w, h = img.size
-            except Exception:
-                w, h = 0, 0
-
-            year = "onbekend"
-            if exif_date and len(exif_date) >= 4:
-                year = exif_date[:4]
-
-            local_photos.append({
-                "filename": fname,
-                "path": str(filepath),
-                "exif_date": exif_date,
-                "width": w,
-                "height": h,
-                "year": year,
-            })
-
-        _update_verify_status("google", "Google Photos ophalen...", total_files, total_files)
-
-        try:
-            google_items = list_all_media_items(service)
-        except Exception as e:
-            VERIFY_STATUS_PATH.write_text(json.dumps({
-                "running": False, "error": f"Google Photos fout: {e}",
-            }))
-            return
-
-        _update_verify_status("matching", "Foto's matchen...", 0, 0)
-        result = match_local_to_google(local_photos, google_items)
-        result["google_count"] = len(google_items)
-
-        # Serialize result (remove non-JSON-serializable fields)
-        VERIFY_RESULT_PATH.write_text(json.dumps(result))
-        VERIFY_STATUS_PATH.write_text(json.dumps({"running": False, "done": True}))
-
-    except Exception as e:
-        logger.exception("Verify scan failed")
-        VERIFY_STATUS_PATH.write_text(json.dumps({"running": False, "error": str(e)}))
+            filepath = Path(dirpath) / fname
+            exif = read_exif_date(filepath)
+            d = parse_exif_date(exif) if exif else None
+            if d:
+                key = f"{d.year}/{d.month:02d}"
+            else:
+                rel = Path(dirpath).relative_to(folder)
+                parts = rel.parts
+                year = month = None
+                for part in parts:
+                    if part.isdigit() and len(part) == 4:
+                        year = part
+                    elif part.isdigit() and len(part) == 2:
+                        month = part
+                key = f"{year or 'onbekend'}/{month or '00'}"
+            by_month.setdefault(key, []).append(str(filepath))
+    return by_month
 
 
-@app.get("/verify", response_class=HTMLResponse)
-async def verify_page(request: Request):
+@app.get("/gphotos-local", response_class=HTMLResponse)
+async def gphotos_local_page(request: Request):
     settings = GlobalSettings.load()
-    creds = load_credentials()
+    dl_path = Path(settings.google_download_path) if settings.google_download_path else None
 
-    if not creds:
-        return templates.TemplateResponse("verify_report.html", {
-            "request": request,
-            "needs_auth": True,
-            "has_credentials": bool(settings.google_credentials_path),
+    if not dl_path or not dl_path.exists():
+        return templates.TemplateResponse(request, "gphotos_local.html", {
+            "no_path": True,
+            "years": [],
         })
 
-    # Check if we have cached results
-    result = None
-    if VERIFY_RESULT_PATH.exists():
-        try:
-            result = json.loads(VERIFY_RESULT_PATH.read_text())
-        except Exception:
-            pass
+    year_set: set[str] = set()
+    for entry in dl_path.iterdir():
+        if entry.is_dir() and entry.name not in SKIP_DIRS:
+            year_set.add(entry.name[:4] if len(entry.name) >= 4 else entry.name)
+        elif entry.is_file() and entry.suffix.lower() in GOOGLE_EXTENSIONS:
+            year_set.add("onbekend")
 
-    # Check if scan is running
-    scan_running = False
-    if VERIFY_STATUS_PATH.exists():
-        try:
-            status = json.loads(VERIFY_STATUS_PATH.read_text())
-            scan_running = status.get("running", False)
-        except Exception:
-            pass
+    years = [{"year": y} for y in sorted(year_set)]
+    threading.Thread(target=_build_photos_filename_index, daemon=True).start()
 
-    return templates.TemplateResponse("verify_report.html", {
-        "request": request,
-        "result": result,
-        "google_count": result.get("google_count", 0) if result else 0,
-        "scan_running": scan_running,
+    return templates.TemplateResponse(request, "gphotos_local.html", {
+        "no_path": False,
+        "years": years,
     })
 
 
-@app.post("/verify/scan")
-async def verify_start_scan():
-    with _verify_lock:
-        # Check if already running
-        if VERIFY_STATUS_PATH.exists():
+@app.get("/api/gphotos-local/counts")
+async def gphotos_local_counts():
+    """Scan Google download folder and return match counts per year (may be slow)."""
+    settings = GlobalSettings.load()
+    if not settings.google_download_path:
+        return JSONResponse({"error": "no path"}, status_code=400)
+    dl_path = Path(settings.google_download_path)
+    if not dl_path.exists():
+        return JSONResponse({"error": "folder not found"}, status_code=404)
+
+    index = _build_photos_filename_index()
+    by_month = _scan_google_folder(dl_path)
+
+    by_year: dict[str, dict] = {}
+    for key, files in by_month.items():
+        year = key.split("/")[0]
+        if year not in by_year:
+            by_year[year] = {"total": 0, "matched": 0, "unmatched": 0}
+        for fpath in files:
+            fname = Path(fpath).name
+            by_year[year]["total"] += 1
+            if fname.lower() in index:
+                by_year[year]["matched"] += 1
+            else:
+                by_year[year]["unmatched"] += 1
+
+    return JSONResponse(by_year)
+
+
+@app.post("/api/gphotos-local/process")
+async def gphotos_local_process():
+    """Delete matched files from Google folder, move unmatched to YYYY/MM in main archive."""
+    settings = GlobalSettings.load()
+    if not settings.google_download_path:
+        return JSONResponse({"error": "no path"}, status_code=400)
+    dl_path = Path(settings.google_download_path)
+    photos_roots = _get_photos_roots()
+    if not photos_roots:
+        return JSONResponse({"error": "geen foto-mappen ingesteld"}, status_code=400)
+    photos_root = photos_roots[0]
+
+    index = _build_photos_filename_index()
+    by_month = _scan_google_folder(dl_path)
+
+    deleted = moved = errors = 0
+    for key, files in by_month.items():
+        year, month = key.split("/")
+        for fpath in files:
+            filepath = Path(fpath)
+            fname = filepath.name
             try:
-                status = json.loads(VERIFY_STATUS_PATH.read_text())
-                if status.get("running"):
-                    return JSONResponse({"ok": False, "message": "Scan loopt al"})
-            except Exception:
-                pass
+                if fname.lower() in index:
+                    filepath.unlink()
+                    deleted += 1
+                else:
+                    dest_dir = photos_root / year / (month if month != "00" else "01") if year != "onbekend" else photos_root / "onbekend"
+                    dest_dir.mkdir(parents=True, exist_ok=True)
+                    dest = dest_dir / fname
+                    if dest.exists():
+                        stem, suffix = filepath.stem, filepath.suffix
+                        counter = 1
+                        while dest.exists():
+                            dest = dest_dir / f"{stem}_{counter}{suffix}"
+                            counter += 1
+                    shutil.move(str(filepath), str(dest))
+                    _reindex_synology(dest)
+                    _add_to_photos_index([fname])
+                    moved += 1
+            except Exception as e:
+                logger.warning("gphotos-local process error %s: %s", fpath, e)
+                errors += 1
 
-        # Clear old results
-        if VERIFY_RESULT_PATH.exists():
-            VERIFY_RESULT_PATH.unlink()
-        _update_verify_status("starting", "Scan wordt gestart...")
-
-    thread = threading.Thread(target=_run_verify_scan, daemon=True)
-    thread.start()
-    return JSONResponse({"ok": True})
-
-
-@app.get("/verify/status")
-async def verify_status():
-    if not VERIFY_STATUS_PATH.exists():
-        return JSONResponse({"running": False})
-    try:
-        return JSONResponse(json.loads(VERIFY_STATUS_PATH.read_text()))
-    except Exception:
-        return JSONResponse({"running": False})
-
-
-@app.get("/verify/auth", response_class=HTMLResponse)
-async def verify_auth(request: Request):
-    settings = GlobalSettings.load()
-    if not settings.google_credentials_path:
-        return HTMLResponse(
-            "<h2>Geen Google credentials</h2>"
-            "<p>Upload eerst je Google OAuth2 credentials JSON via <a href='/settings'>Instellingen</a>.</p>",
-        )
-
-    base_url = str(request.base_url).rstrip("/")
-    redirect_uri = f"{base_url}/verify/callback"
-    flow = get_oauth_flow(settings.google_credentials_path, redirect_uri)
-    auth_url, state = flow.authorization_url(prompt="consent", access_type="offline")
-
-    # Save code_verifier for PKCE (needed in callback)
-    verifier_path = STORAGE_DIR / "oauth_code_verifier.txt"
-    verifier_path.write_text(flow.code_verifier or "")
-
-    from fastapi.responses import RedirectResponse
-    return RedirectResponse(url=auth_url)
-
-
-@app.get("/verify/callback", response_class=HTMLResponse)
-async def verify_callback(request: Request):
-    settings = GlobalSettings.load()
-    base_url = str(request.base_url).rstrip("/")
-    redirect_uri = f"{base_url}/verify/callback"
-    flow = get_oauth_flow(settings.google_credentials_path, redirect_uri)
-
-    # Restore PKCE code_verifier from auth step
-    verifier_path = STORAGE_DIR / "oauth_code_verifier.txt"
-    if verifier_path.exists():
-        flow.code_verifier = verifier_path.read_text() or None
-        verifier_path.unlink()
-
-    # Ensure authorization_response uses same scheme as redirect_uri
-    auth_response = str(request.url)
-    if redirect_uri.startswith("https://") and auth_response.startswith("http://"):
-        auth_response = "https://" + auth_response[len("http://"):]
-
-    try:
-        flow.fetch_token(authorization_response=auth_response)
-        save_credentials(flow.credentials)
-    except Exception as e:
-        logger.exception("OAuth callback failed")
-        return HTMLResponse(
-            f"<h2>OAuth fout</h2><p>{e}</p>"
-            "<p><a href='/verify/auth'>Probeer opnieuw</a></p>",
-            status_code=500,
-        )
-
-    from fastapi.responses import RedirectResponse
-    return RedirectResponse(url="/verify")
+    return JSONResponse({"deleted": deleted, "moved": moved, "errors": errors})
 
 
 # --- Page: Album context (step 1) --- (catch-all, must be LAST)
@@ -1551,8 +1434,7 @@ async def album_context_page(request: Request, album_rel: str):
     photos = _load_photos(folder)
     missing_exif = sum(1 for p in photos if not p.original_exif_date)
     is_year_month = _is_year_month_folder(Path(album_rel))
-    return templates.TemplateResponse("album_context.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "album_context.html", {
         "album_rel": album_rel,
         "album_data": album_data,
         "photo_count": len(photos),

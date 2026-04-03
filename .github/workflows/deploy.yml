@@ -9,7 +9,25 @@ permissions:
   packages: write
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[test]"
+
+      - name: Run smoke tests
+        run: pytest tests/ -v
+
   build-and-deploy:
+    needs: test
     runs-on: ubuntu-latest
 
     steps:

@@ -671,12 +671,31 @@ async def icloud_year_counts(year: str):
                 unmatched += 1
 
     pct = round((matched + dismissed) / total * 100) if total > 0 else 100
+
+    # Count photos on Synology for this year (YYYY/MM folder structure)
+    synology_count = 0
+    for root in _get_photos_roots():
+        year_dir_syn = root / year
+        if year_dir_syn.is_dir():
+            for month_dir in year_dir_syn.iterdir():
+                if month_dir.is_dir():
+                    synology_count += sum(
+                        1 for f in month_dir.iterdir()
+                        if f.is_file() and f.suffix.lower() in ICLOUD_EXTENSIONS
+                    )
+            # Also count files directly in the year folder
+            synology_count += sum(
+                1 for f in year_dir_syn.iterdir()
+                if f.is_file() and f.suffix.lower() in ICLOUD_EXTENSIONS
+            )
+
     return JSONResponse({
         "total": total,
         "matched": matched,
         "dismissed": dismissed,
         "unmatched": unmatched,
         "pct": pct,
+        "synology_count": synology_count,
     })
 
 

@@ -22,8 +22,9 @@
         <thead>
             <tr>
                 <th>Jaar/Maand</th>
-                <th style="text-align: right;">Totaal</th>
-                <th style="text-align: right;">Aanwezig</th>
+                <th style="text-align: right;">iCloud</th>
+                <th style="text-align: right;">Synology</th>
+                <th style="text-align: right;">Matched</th>
                 <th style="text-align: right;">Niet belangrijk</th>
                 <th style="text-align: right;">Ontbrekend</th>
                 <th style="text-align: right;">%</th>
@@ -38,6 +39,7 @@
                     {{ yr.year }}
                 </td>
                 <td style="text-align: right;" class="col-total"><span style="color: #aaa;">…</span></td>
+                <td style="text-align: right;" class="col-synology"><span style="color: #aaa;">…</span></td>
                 <td style="text-align: right;" class="col-matched"><span style="color: #aaa;">…</span></td>
                 <td style="text-align: right;" class="col-dismissed"><span style="color: #aaa;">…</span></td>
                 <td style="text-align: right;" class="col-unmatched"><span style="color: #aaa;">…</span></td>
@@ -50,6 +52,7 @@
                     {% if folder.month == "00" %}{{ yr.year }}{% else %}{{ yr.year }}/{{ folder.month }}{% endif %}
                 </td>
                 <td style="text-align: right;" class="col-total"><span style="color: #aaa;">…</span></td>
+                <td style="text-align: right;" class="col-synology"><span style="color: #aaa;">—</span></td>
                 <td style="text-align: right;" class="col-matched"><span style="color: #aaa;">…</span></td>
                 <td style="text-align: right;" class="col-dismissed"><span style="color: #aaa;">…</span></td>
                 <td style="text-align: right;" class="col-unmatched"><span style="color: #aaa;">…</span></td>
@@ -76,6 +79,9 @@ function setYearCounts(year, data) {
     const yearRow = document.querySelector('.year-row[data-year="' + year + '"]');
     if (!yearRow) return;
     yearRow.querySelector('.col-total').textContent = data.total;
+    if (data.synology_count !== undefined) {
+        yearRow.querySelector('.col-synology').innerHTML = '<span style="color: #4fc3f7;">' + data.synology_count + '</span>';
+    }
     yearRow.querySelector('.col-matched').innerHTML = '<span style="color: #4ecca3;">' + data.matched + '</span>';
     yearRow.querySelector('.col-dismissed').innerHTML = '<span style="color: #aaa;">' + data.dismissed + '</span>';
     if (data.unmatched > 0) {

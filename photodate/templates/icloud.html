@@ -18,6 +18,11 @@
 {% else %}
 <div class="card">
     <h2>Overzicht per jaar</h2>
+    <div style="margin-bottom: 1rem; display: flex; gap: 0.75rem; flex-wrap: wrap;">
+        <button class="btn-secondary" onclick="collapseAll()" style="font-size: 0.85em; padding: 0.3rem 0.75rem;">▶ Alles inklappen</button>
+        <button class="btn-secondary" onclick="expandAll()" style="font-size: 0.85em; padding: 0.3rem 0.75rem;">▼ Alles uitklappen</button>
+        <button class="btn-secondary" onclick="collapseSafe()" style="font-size: 0.85em; padding: 0.3rem 0.75rem;" id="btnCollapseSafe" title="Klapt jaren in die 100% gematcht zijn">▶ Veilige jaren inklappen</button>
+    </div>
     <table>
         <thead>
             <tr>
@@ -80,12 +85,37 @@
 {% endif %}
 
 <script>
+const safeYears = new Set();
+
 function toggleYear(year) {
     const rows = document.querySelectorAll('.month-' + year);
     const toggle = document.getElementById('toggle-' + year);
     const collapsed = toggle.textContent === '▶';
     rows.forEach(r => r.style.display = collapsed ? '' : 'none');
     toggle.textContent = collapsed ? '▼' : '▶';
+}
+
+function collapseAll() {
+    document.querySelectorAll('tr.year-row').forEach(row => {
+        const year = row.dataset.year;
+        document.querySelectorAll('.month-' + year).forEach(r => r.style.display = 'none');
+        document.getElementById('toggle-' + year).textContent = '▶';
+    });
+}
+
+function expandAll() {
+    document.querySelectorAll('tr.year-row').forEach(row => {
+        const year = row.dataset.year;
+        document.querySelectorAll('.month-' + year).forEach(r => r.style.display = '');
+        document.getElementById('toggle-' + year).textContent = '▼';
+    });
+}
+
+function collapseSafe() {
+    safeYears.forEach(year => {
+        document.querySelectorAll('.month-' + year).forEach(r => r.style.display = 'none');
+        document.getElementById('toggle-' + year).textContent = '▶';
+    });
 }
 
 function setYearCounts(year, data) {
@@ -108,6 +138,7 @@ function setYearCounts(year, data) {
     yearRow.querySelector('.col-pct').innerHTML = '<span style="color: ' + pctColor + '; font-weight: bold;">' + data.pct + '%</span>';
     if (data.pct === 100 && data.total > 0) {
         yearRow.querySelector('.col-status').innerHTML = '<span style="color: #4ecca3; font-weight: bold;">✓ veilig te verwijderen</span>';
+        safeYears.add(year);
     } else if (data.unmatched > 0) {
         yearRow.querySelector('.col-status').innerHTML = '<span style="color: #f0a500; font-size: 0.85em;">' + data.unmatched + ' nog reviewen</span>';
     }

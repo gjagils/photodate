@@ -47,6 +47,18 @@
                 <td class="col-status"></td>
             </tr>
             {% for folder in yr.months %}
+            {% if folder.synology_only %}
+            <tr class="month-row month-{{ yr.year }}" data-year="{{ yr.year }}" data-month="{{ folder.month }}" data-synology-only="1" style="font-size: 0.9em; opacity: 0.6;">
+                <td style="padding-left: 2.5rem; color: #aaa;">{{ yr.year }}/{{ folder.month }}</td>
+                <td style="text-align: right; color: #aaa;">0</td>
+                <td style="text-align: right;" class="col-synology"><span style="color: #aaa;">…</span></td>
+                <td style="text-align: right; color: #aaa;">—</td>
+                <td style="text-align: right; color: #aaa;">—</td>
+                <td style="text-align: right; color: #aaa;">—</td>
+                <td style="text-align: right;"><span style="color: #4ecca3;">✓</span></td>
+                <td style="color: #aaa; font-size: 0.8em;">alleen Synology</td>
+            </tr>
+            {% else %}
             <tr class="month-row month-{{ yr.year }}" data-year="{{ yr.year }}" data-month="{{ folder.month }}" style="font-size: 0.9em;">
                 <td style="padding-left: 2.5rem; color: #ccc;">
                     {% if folder.month == "00" %}{{ yr.year }}{% else %}{{ yr.year }}/{{ folder.month }}{% endif %}
@@ -59,6 +71,7 @@
                 <td style="text-align: right;" class="col-pct"><span style="color: #aaa;">…</span></td>
                 <td></td>
             </tr>
+            {% endif %}
             {% endfor %}
             {% endfor %}
         </tbody>
@@ -126,7 +139,8 @@ async function loadAllCounts() {
             .catch(() => {});
     }
 
-    const queue = [...document.querySelectorAll('tr.month-row[data-month]')];
+    // iCloud months: lazy load match counts
+    const queue = [...document.querySelectorAll('tr.month-row[data-month]:not([data-synology-only])')];
     async function processNext() {
         while (queue.length > 0) {
             const row = queue.shift();
@@ -140,6 +154,19 @@ async function loadAllCounts() {
     const workers = [];
     for (let i = 0; i < Math.min(3, queue.length); i++) workers.push(processNext());
     await Promise.all(workers);
+
+    // Synology-only months: load count from separate endpoint
+    for (const row of document.querySelectorAll('tr.month-row[data-synology-only="1"]')) {
+        fetch('/api/synology/' + row.dataset.year + '/' + row.dataset.month + '/count')
+            .then(r => r.ok ? r.json() : null)
+            .then(data => {
+                if (data) {
+                    const col = row.querySelector('.col-synology');
+                    if (col) col.innerHTML = '<span style="color: #4fc3f7;">' + data.count + '</span>';
+                }
+            })
+            .catch(() => {});
+    }
 }
 
 loadAllCounts();

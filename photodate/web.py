@@ -560,12 +560,32 @@ async def icloud_dashboard(request: Request):
             "no_path": True,
         })
 
-    folders = _get_icloud_folders(icloud_path)
+    icloud_folders = _get_icloud_folders(icloud_path)
 
-    # Group folders by year for the template
+    # Collect iCloud months as a set for quick lookup
+    icloud_set: set[tuple[str, str]] = {(f["year"], f["month"]) for f in icloud_folders}
+
+    # Also collect Synology YYYY/MM months
+    synology_months: list[dict] = []
+    for root in _get_photos_roots():
+        for year_dir in sorted(root.iterdir()):
+            if not year_dir.is_dir() or not year_dir.name.isdigit() or len(year_dir.name) != 4:
+                continue
+            year = year_dir.name
+            for month_dir in sorted(year_dir.iterdir()):
+                if month_dir.is_dir() and month_dir.name.isdigit() and len(month_dir.name) == 2:
+                    if (year, month_dir.name) not in icloud_set:
+                        synology_months.append({"year": year, "month": month_dir.name, "synology_only": True})
+
+    # Merge: iCloud months + synology-only months, grouped by year
     years: dict[str, list[dict]] = {}
-    for f in folders:
+    for f in icloud_folders:
+        years.setdefault(f["year"], []).append({**f, "synology_only": False})
+    for f in synology_months:
         years.setdefault(f["year"], []).append(f)
+    # Sort months within each year
+    for y in years:
+        years[y].sort(key=lambda m: m["month"])
     years_list = [{"year": y, "months": months} for y, months in sorted(years.items())]
 
     # Pre-build filename index in background so first API call is fast
@@ -697,6 +717,17 @@ async def icloud_year_counts(year: str):
         "pct": pct,
         "synology_count": synology_count,
     })
+
+
+@app.get("/api/synology/{year}/{month}/count")
+async def synology_month_count(year: str, month: str):
+    """Return photo count on Synology for a specific YYYY/MM folder."""
+    count = 0
+    for root in _get_photos_roots():
+        month_dir = root / year / month
+        if month_dir.is_dir():
+            count += sum(1 for f in month_dir.iterdir() if f.is_file() and f.suffix.lower() in ICLOUD_EXTENSIONS)
+    return JSONResponse({"count": count})
 
 
 @app.get("/icloud-thumb/{year}/{month}/{filename}")

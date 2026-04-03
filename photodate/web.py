@@ -637,6 +637,54 @@ async def icloud_counts(year: str, month: str):
     })
 
 
+@app.get("/api/icloud/{year}/counts")
+async def icloud_year_counts(year: str):
+    """Return aggregated match counts for all months in a year (lazy loading)."""
+    settings = GlobalSettings.load()
+    if not settings.icloud_photos_path:
+        return JSONResponse({"error": "no icloud path"}, status_code=400)
+
+    icloud_path = Path(settings.icloud_photos_path)
+    year_dir = icloud_path / year
+    if not year_dir.exists():
+        return JSONResponse({"error": "folder not found"}, status_code=404)
+
+    index = _build_photos_filename_index()
+    icloud_data = ICloudData.load()
+
+    total = matched = dismissed = unmatched = 0
+
+    # Walk all month subdirs (and files directly in year dir)
+    for entry in year_dir.iterdir():
+        if entry.is_dir() and entry.name.isdigit() and len(entry.name) == 2:
+            files = [f.name for f in entry.iterdir() if f.is_file() and f.suffix.lower() in ICLOUD_EXTENSIONS]
+            key = f"{year}/{entry.name}"
+        elif entry.is_file() and entry.suffix.lower() in ICLOUD_EXTENSIONS:
+            files = [entry.name]
+            key = f"{year}/00"
+        else:
+            continue
+
+        dismissed_set = set(icloud_data.dismissed.get(key, []))
+        for fname in files:
+            total += 1
+            if fname.lower() in index:
+                matched += 1
+            elif fname in dismissed_set:
+                dismissed += 1
+            else:
+                unmatched += 1
+
+    pct = round((matched + dismissed) / total * 100) if total > 0 else 100
+    return JSONResponse({
+        "total": total,
+        "matched": matched,
+        "dismissed": dismissed,
+        "unmatched": unmatched,
+        "pct": pct,
+    })
+
+
 @app.get("/icloud-thumb/{year}/{month}/{filename}")
 async def icloud_thumbnail(year: str, month: str, filename: str, size: int = 150):
     """Serve thumbnail for an iCloud photo."""

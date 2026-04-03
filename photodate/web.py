@@ -572,12 +572,18 @@ async def icloud_dashboard(request: Request):
 
     folders = _get_icloud_folders(icloud_path)
 
+    # Group folders by year for the template
+    years: dict[str, list[dict]] = {}
+    for f in folders:
+        years.setdefault(f["year"], []).append(f)
+    years_list = [{"year": y, "months": months} for y, months in sorted(years.items())]
+
     # Pre-build filename index in background so first API call is fast
     threading.Thread(target=_build_photos_filename_index, daemon=True).start()
 
     return templates.TemplateResponse("icloud.html", {
         "request": request,
-        "folders": folders,
+        "years": years_list,
         "no_path": False,
     })
 

@@ -11,7 +11,7 @@
         Geen iCloud-pad ingesteld. Ga naar <a href="/settings">Instellingen</a> om het pad in te stellen.
     </p>
 </div>
-{% elif not folders %}
+{% elif not years %}
 <div class="card">
     <p style="color: #aaa;">Geen mappen gevonden in het iCloud-pad.</p>
 </div>
@@ -31,40 +31,32 @@
             </tr>
         </thead>
         <tbody>
-            {% set ns = namespace(current_year=None) %}
-            {% for folder in folders %}
-                {% if folder.year != ns.current_year %}
-                    {% set ns.current_year = folder.year %}
-                    {# Year header row #}
-                    <tr class="year-row" data-year="{{ folder.year }}" onclick="toggleYear('{{ folder.year }}')" style="cursor: pointer; background: #0f3460;">
-                        <td style="font-weight: bold; font-size: 1.05em;">
-                            <span class="year-toggle" id="toggle-{{ folder.year }}" style="margin-right: 0.5rem; color: #aaa;">▼</span>
-                            {{ folder.year }}
-                        </td>
-                        <td style="text-align: right;" class="col-total"><span style="color: #aaa;">…</span></td>
-                        <td style="text-align: right;" class="col-matched"><span style="color: #aaa;">…</span></td>
-                        <td style="text-align: right;" class="col-dismissed"><span style="color: #aaa;">…</span></td>
-                        <td style="text-align: right;" class="col-unmatched"><span style="color: #aaa;">…</span></td>
-                        <td style="text-align: right;" class="col-pct"><span style="color: #aaa;">…</span></td>
-                        <td class="col-status"></td>
-                    </tr>
-                {% endif %}
-                {# Month row #}
-                <tr class="month-row month-{{ folder.year }}" data-year="{{ folder.year }}" data-month="{{ folder.month }}" style="font-size: 0.9em;">
-                    <td style="padding-left: 2.5rem; color: #ccc;">
-                        {% if folder.month == "00" %}
-                        {{ folder.year }}
-                        {% else %}
-                        {{ folder.year }}/{{ folder.month }}
-                        {% endif %}
-                    </td>
-                    <td style="text-align: right;" class="col-total"><span style="color: #aaa;">…</span></td>
-                    <td style="text-align: right;" class="col-matched"><span style="color: #aaa;">…</span></td>
-                    <td style="text-align: right;" class="col-dismissed"><span style="color: #aaa;">…</span></td>
-                    <td style="text-align: right;" class="col-unmatched"><span style="color: #aaa;">…</span></td>
-                    <td style="text-align: right;" class="col-pct"><span style="color: #aaa;">…</span></td>
-                    <td></td>
-                </tr>
+            {% for yr in years %}
+            <tr class="year-row" data-year="{{ yr.year }}" onclick="toggleYear('{{ yr.year }}')" style="cursor: pointer; background: #0f3460;">
+                <td style="font-weight: bold; font-size: 1.05em;">
+                    <span id="toggle-{{ yr.year }}" style="margin-right: 0.5rem; color: #aaa;">▼</span>
+                    {{ yr.year }}
+                </td>
+                <td style="text-align: right;" class="col-total"><span style="color: #aaa;">…</span></td>
+                <td style="text-align: right;" class="col-matched"><span style="color: #aaa;">…</span></td>
+                <td style="text-align: right;" class="col-dismissed"><span style="color: #aaa;">…</span></td>
+                <td style="text-align: right;" class="col-unmatched"><span style="color: #aaa;">…</span></td>
+                <td style="text-align: right;" class="col-pct"><span style="color: #aaa;">…</span></td>
+                <td class="col-status"></td>
+            </tr>
+            {% for folder in yr.months %}
+            <tr class="month-row month-{{ yr.year }}" data-year="{{ yr.year }}" data-month="{{ folder.month }}" style="font-size: 0.9em;">
+                <td style="padding-left: 2.5rem; color: #ccc;">
+                    {% if folder.month == "00" %}{{ yr.year }}{% else %}{{ yr.year }}/{{ folder.month }}{% endif %}
+                </td>
+                <td style="text-align: right;" class="col-total"><span style="color: #aaa;">…</span></td>
+                <td style="text-align: right;" class="col-matched"><span style="color: #aaa;">…</span></td>
+                <td style="text-align: right;" class="col-dismissed"><span style="color: #aaa;">…</span></td>
+                <td style="text-align: right;" class="col-unmatched"><span style="color: #aaa;">…</span></td>
+                <td style="text-align: right;" class="col-pct"><span style="color: #aaa;">…</span></td>
+                <td></td>
+            </tr>
+            {% endfor %}
             {% endfor %}
         </tbody>
     </table>
@@ -73,114 +65,78 @@
 
 <script>
 function toggleYear(year) {
-    const rows = document.querySelectorAll(`.month-${year}`);
-    const toggle = document.getElementById(`toggle-${year}`);
+    const rows = document.querySelectorAll('.month-' + year);
+    const toggle = document.getElementById('toggle-' + year);
     const collapsed = toggle.textContent === '▶';
     rows.forEach(r => r.style.display = collapsed ? '' : 'none');
     toggle.textContent = collapsed ? '▼' : '▶';
 }
 
 function setYearCounts(year, data) {
-    const yearRow = document.querySelector(`.year-row[data-year="${year}"]`);
+    const yearRow = document.querySelector('.year-row[data-year="' + year + '"]');
     if (!yearRow) return;
-
     yearRow.querySelector('.col-total').textContent = data.total;
-    yearRow.querySelector('.col-matched').innerHTML =
-        `<span style="color: #4ecca3;">${data.matched}</span>`;
-    yearRow.querySelector('.col-dismissed').innerHTML =
-        `<span style="color: #aaa;">${data.dismissed}</span>`;
-
+    yearRow.querySelector('.col-matched').innerHTML = '<span style="color: #4ecca3;">' + data.matched + '</span>';
+    yearRow.querySelector('.col-dismissed').innerHTML = '<span style="color: #aaa;">' + data.dismissed + '</span>';
     if (data.unmatched > 0) {
-        yearRow.querySelector('.col-unmatched').innerHTML =
-            `<span style="color: #e94560; font-weight: bold;">${data.unmatched}</span>`;
+        yearRow.querySelector('.col-unmatched').innerHTML = '<span style="color: #e94560; font-weight: bold;">' + data.unmatched + '</span>';
     } else {
-        yearRow.querySelector('.col-unmatched').innerHTML =
-            `<span style="color: #4ecca3;">0</span>`;
+        yearRow.querySelector('.col-unmatched').innerHTML = '<span style="color: #4ecca3;">0</span>';
     }
-
     let pctColor = '#4ecca3';
     if (data.pct < 50) pctColor = '#e94560';
     else if (data.pct < 100) pctColor = '#f0a500';
-    yearRow.querySelector('.col-pct').innerHTML =
-        `<span style="color: ${pctColor}; font-weight: bold;">${data.pct}%</span>`;
-
+    yearRow.querySelector('.col-pct').innerHTML = '<span style="color: ' + pctColor + '; font-weight: bold;">' + data.pct + '%</span>';
     if (data.pct === 100 && data.total > 0) {
-        yearRow.querySelector('.col-status').innerHTML =
-            `<span style="color: #4ecca3; font-weight: bold;">✓ veilig te verwijderen</span>`;
+        yearRow.querySelector('.col-status').innerHTML = '<span style="color: #4ecca3; font-weight: bold;">✓ veilig te verwijderen</span>';
     } else if (data.unmatched > 0) {
-        yearRow.querySelector('.col-status').innerHTML =
-            `<span style="color: #f0a500; font-size: 0.85em;">${data.unmatched} nog reviewen</span>`;
+        yearRow.querySelector('.col-status').innerHTML = '<span style="color: #f0a500; font-size: 0.85em;">' + data.unmatched + ' nog reviewen</span>';
     }
 }
 
 function setMonthCounts(year, month, data) {
-    const row = document.querySelector(`tr.month-row[data-year="${year}"][data-month="${month}"]`);
+    const row = document.querySelector('tr.month-row[data-year="' + year + '"][data-month="' + month + '"]');
     if (!row) return;
-
     row.querySelector('.col-total').textContent = data.total;
-    row.querySelector('.col-matched').innerHTML =
-        `<span style="color: #4ecca3;">${data.matched}</span>`;
-    row.querySelector('.col-dismissed').innerHTML =
-        `<span style="color: #aaa;">${data.dismissed}</span>`;
-
+    row.querySelector('.col-matched').innerHTML = '<span style="color: #4ecca3;">' + data.matched + '</span>';
+    row.querySelector('.col-dismissed').innerHTML = '<span style="color: #aaa;">' + data.dismissed + '</span>';
     if (data.unmatched > 0) {
-        row.querySelector('.col-unmatched').innerHTML =
-            `<a href="/icloud/${year}/${month}/review" style="color: #e94560; font-weight: bold;">${data.unmatched}</a>`;
+        row.querySelector('.col-unmatched').innerHTML = '<a href="/icloud/' + year + '/' + month + '/review" style="color: #e94560; font-weight: bold;">' + data.unmatched + '</a>';
     } else {
-        row.querySelector('.col-unmatched').innerHTML =
-            `<span style="color: #4ecca3;">0</span>`;
+        row.querySelector('.col-unmatched').innerHTML = '<span style="color: #4ecca3;">0</span>';
     }
-
     let pctColor = '#4ecca3';
     if (data.pct < 50) pctColor = '#e94560';
     else if (data.pct < 100) pctColor = '#f0a500';
-    row.querySelector('.col-pct').innerHTML =
-        `<span style="color: ${pctColor};">${data.pct}%</span>`;
+    row.querySelector('.col-pct').innerHTML = '<span style="color: ' + pctColor + ';">' + data.pct + '%</span>';
 }
 
 async function loadAllCounts() {
-    // Collect unique years
-    const years = [...new Set(
-        [...document.querySelectorAll('tr.year-row')].map(r => r.dataset.year)
-    )];
-
-    // Load year totals first (one request per year, fast overview)
+    const years = [...new Set([...document.querySelectorAll('tr.year-row')].map(r => r.dataset.year))];
     for (const year of years) {
-        fetch(`/api/icloud/${year}/counts`)
+        fetch('/api/icloud/' + year + '/counts')
             .then(r => r.ok ? r.json() : null)
             .then(data => { if (data) setYearCounts(year, data); })
             .catch(() => {});
     }
 
-    // Then load month details (lazy, 3 concurrent)
-    const monthRows = [...document.querySelectorAll('tr.month-row[data-month]')];
-    const queue = monthRows.slice();
-
+    const queue = [...document.querySelectorAll('tr.month-row[data-month]')];
     async function processNext() {
         while (queue.length > 0) {
             const row = queue.shift();
-            const year = row.dataset.year;
-            const month = row.dataset.month;
             try {
-                const resp = await fetch(`/api/icloud/${year}/${month}/counts`);
+                const resp = await fetch('/api/icloud/' + row.dataset.year + '/' + row.dataset.month + '/counts');
                 if (!resp.ok) continue;
-                const data = await resp.json();
-                setMonthCounts(year, month, data);
+                setMonthCounts(row.dataset.year, row.dataset.month, await resp.json());
             } catch (e) {}
         }
     }
-
     const workers = [];
-    for (let i = 0; i < Math.min(3, queue.length); i++) {
-        workers.push(processNext());
-    }
+    for (let i = 0; i < Math.min(3, queue.length); i++) workers.push(processNext());
     await Promise.all(workers);
 }
 
 loadAllCounts();
-
-window.addEventListener('pageshow', function(event) {
-    if (event.persisted) loadAllCounts();
-});
+window.addEventListener('pageshow', e => { if (e.persisted) loadAllCounts(); });
 </script>
 {% endblock %}

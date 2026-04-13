@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 permissions:
   contents: read
   packages: write
@@ -29,6 +33,7 @@ jobs:
   build-and-deploy:
     needs: test
     runs-on: ubuntu-latest
+    environment: portainer
 
     steps:
       - name: Checkout
@@ -37,7 +42,7 @@ jobs:
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
@@ -55,35 +60,30 @@ jobs:
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
 
-      - name: Update Portainer stack
+      - name: Deploy via Portainer API
+        env:
+          PORTAINER_URL: ${{ secrets.PORTAINER_URL }}
+          PORTAINER_API_TOKEN: ${{ secrets.PORTAINER_API_TOKEN }}
+          PORTAINER_STACK_ID: ${{ secrets.PORTAINER_STACK_ID }}
         run: |
-          COMPOSE_CONTENT=$(cat docker-compose.yml)
+          STACK_INFO=$(curl -s -H "X-API-Key: $PORTAINER_API_TOKEN" \
+            "$PORTAINER_URL/api/stacks/$PORTAINER_STACK_ID")
+          ENDPOINT_ID=$(echo "$STACK_INFO" | jq -r '.EndpointId')
+          CURRENT_ENV=$(echo "$STACK_INFO" | jq '.Env // []')
 
-          PAYLOAD=$(jq -n \
-            --arg content "$COMPOSE_CONTENT" \
-            --arg openai_key "${{ secrets.OPENAI_API_KEY }}" \
-            '{
-              stackFileContent: $content,
-              env: [
-                { name: "OPENAI_API_KEY", value: $openai_key }
-              ],
-              prune: true,
-              pullImage: true
-            }')
+          IMAGE_LOWER=$(echo "$IMAGE_NAME" | tr '[:upper:]' '[:lower:]')
+          curl -s -X POST \
+            -H "X-API-Key: $PORTAINER_API_TOKEN" \
+            "$PORTAINER_URL/api/endpoints/$ENDPOINT_ID/docker/images/create?fromImage=ghcr.io%2F${IMAGE_LOWER}&tag=latest"
 
-          response=$(curl -s -w "\n%{http_code}" -X PUT \
-            -H "X-API-Key: ${{ secrets.PORTAINER_API_TOKEN }}" \
+          STACK_FILE=$(cat docker-compose.yml)
+          curl -s -X PUT \
+            -H "X-API-Key: $PORTAINER_API_TOKEN" \
             -H "Content-Type: application/json" \
-            "${{ secrets.PORTAINER_URL }}/api/stacks/${{ secrets.PORTAINER_STACK_ID }}?endpointId=${{ secrets.PORTAINER_ENDPOINT_ID }}" \
-            -d "$PAYLOAD")
-
-          http_code=$(echo "$response" | tail -1)
-          body=$(echo "$response" | sed '$d')
-
-          echo "HTTP $http_code"
-          echo "$body"
-
-          if [ "$http_code" -ge 400 ]; then
-            echo "::error::Portainer stack update failed with HTTP $http_code"
-            exit 1
-          fi
+            -d "{
+              \"StackFileContent\": $(echo \"$STACK_FILE\" | jq -Rs .),
+              \"Env\": $CURRENT_ENV,
+              \"Prune\": true
+            }" \
+            "$PORTAINER_URL/api/stacks/$PORTAINER_STACK_ID?endpointId=$ENDPOINT_ID"
+          echo "Deploy complete."

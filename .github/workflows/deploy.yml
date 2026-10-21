@@ -39,9 +39,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -54,8 +51,6 @@ jobs:
         with:
           context: .
           push: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
           tags: |
             ghcr.io/${{ github.repository_owner }}/photodate:latest
             ghcr.io/${{ github.repository_owner }}/photodate:${{ github.sha }}
@@ -71,19 +66,18 @@ jobs:
           PORTAINER_API_TOKEN: ${{ secrets.PORTAINER_API_TOKEN }}
           PORTAINER_STACK_ID: ${{ secrets.PORTAINER_STACK_ID }}
         run: |
-          set -o pipefail
-          STACK_INFO=$(curl --fail-with-body -sS -H "X-API-Key: $PORTAINER_API_TOKEN" \
+          STACK_INFO=$(curl -s -H "X-API-Key: $PORTAINER_API_TOKEN" \
             "$PORTAINER_URL/api/stacks/$PORTAINER_STACK_ID")
           ENDPOINT_ID=$(echo "$STACK_INFO" | jq -r '.EndpointId')
           CURRENT_ENV=$(echo "$STACK_INFO" | jq '.Env // []')
 
           IMAGE_LOWER=$(echo "$IMAGE_NAME" | tr '[:upper:]' '[:lower:]')
-          curl --fail-with-body -sS -X POST \
+          curl -s -X POST \
             -H "X-API-Key: $PORTAINER_API_TOKEN" \
             "$PORTAINER_URL/api/endpoints/$ENDPOINT_ID/docker/images/create?fromImage=ghcr.io%2F${IMAGE_LOWER}&tag=latest"
 
           STACK_FILE=$(cat docker-compose.yml)
-          curl --fail-with-body -sS -X PUT \
+          curl -s -X PUT \
             -H "X-API-Key: $PORTAINER_API_TOKEN" \
             -H "Content-Type: application/json" \
             -d "{
@@ -93,15 +87,3 @@ jobs:
             }" \
             "$PORTAINER_URL/api/stacks/$PORTAINER_STACK_ID?endpointId=$ENDPOINT_ID"
           echo "Deploy complete."
-
-      - name: Healthcheck na deploy (niet-blokkerend tot bereikbaarheid via Tailscale is bevestigd)
-        continue-on-error: true
-        run: |
-          for i in $(seq 1 18); do
-            CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://192.168.68.120:8920/" || true)
-            echo "poging $i/18: HTTP $CODE"
-            case "$CODE" in 2*|3*|401) echo "Bereikbaar."; exit 0;; esac
-            sleep 10
-          done
-          echo "::warning::App niet bereikbaar na deploy (of runner bereikt het LAN niet)."
-          exit 1

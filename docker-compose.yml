@@ -10,6 +10,9 @@ services:
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - PHOTOS_PATHS=${PHOTOS_PATHS}
+      # Optioneel:
+      # - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+      # - DATA_DIR=/data
     volumes:
       # Data volume voor instellingen en albumdata (bewaar dit!)
       - ./data:/data

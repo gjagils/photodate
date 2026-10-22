@@ -39,6 +39,35 @@
     </form>
 </div>
 
+{% if settings.face_profiles %}
+<div class="card">
+    <h2>Globale gezichtsprofielen</h2>
+    <p style="color: #aaa; margin-bottom: 1rem;">
+        Opgeslagen gezichten worden automatisch herkend in nieuwe albums.
+        Voeg een profiel toe via de "Bewaar als globaal profiel" optie op de analysepagina.
+    </p>
+    <table>
+        <tr>
+            <th>Naam</th>
+            <th style="width:100px; text-align:center;">Verwijderen</th>
+        </tr>
+        {% for profile in settings.face_profiles %}
+        <tr>
+            <td>{{ profile.name }}</td>
+            <td style="text-align:center;">
+                <form method="post" action="/settings/delete-face-profile/{{ profile.name }}" style="display:inline;">
+                    <button type="submit" style="background:#3a1212; color:#e94560; padding:0.3rem 0.7rem; font-size:0.8rem;"
+                            onclick="return confirm('{{ profile.name }} verwijderen?')">
+                        Verwijder
+                    </button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+</div>
+{% endif %}
+
 <script>
 let memberCount = {{ settings.family_members | length }};
 function addMember() {

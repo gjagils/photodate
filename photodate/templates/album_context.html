@@ -35,9 +35,13 @@
         <div id="milestones">
             {% for ms in album_data.milestones %}
             <div class="milestone-row">
-                <div>
+                <div style="position: relative;">
                     <label>Foto #</label>
-                    <input type="number" name="ms_photo_{{ loop.index0 }}" value="{{ ms.photo_index }}" min="1" max="{{ photo_count }}" style="width: 80px;">
+                    <input type="number" name="ms_photo_{{ loop.index0 }}" value="{{ ms.photo_index }}"
+                           min="1" max="{{ photo_count }}" style="width: 80px;"
+                           oninput="updatePreview(this)">
+                    <img class="ms-preview" hidden
+                         style="width:60px;height:60px;object-fit:cover;border-radius:4px;vertical-align:middle;margin-left:0.4rem;" alt="">
                 </div>
                 <div style="flex: 1;">
                     <label>Datum</label>
@@ -59,34 +63,80 @@
     </div>
 </form>
 
-<form method="post" action="/album/{{ album_rel }}/analyze">
-    <div class="card">
-        <h2>Analyseren</h2>
-        <p style="color: #aaa; margin-bottom: 1rem;">
-            Start de AI-analyse. Dit scant alle foto's, detecteert gezichten, en schat datums.
-            Dit kan even duren bij grote albums.
-        </p>
-        <button type="submit" onclick="this.disabled=true; this.textContent='Bezig met analyseren...'; this.form.submit();">
-            Analyseer dit album
-        </button>
-    </div>
-</form>
+<div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+    <form method="post" action="/album/{{ album_rel }}/analyze" style="flex: 1;">
+        <div class="card" style="height: 100%;">
+            <h2>Analyseren</h2>
+            <p style="color: #aaa; margin-bottom: 1rem;">
+                Start de volledige analyse: gezichtsdetectie + AI-datering.
+                Duurt enkele minuten bij grote albums.
+            </p>
+            <button type="submit" onclick="this.disabled=true; this.textContent='Starten…'; this.form.submit();">
+                Analyseer dit album
+            </button>
+        </div>
+    </form>
+
+    {% if album_data.analysis_status == 'done' %}
+    <form method="post" action="/album/{{ album_rel }}/reanalyze" style="flex: 1;">
+        <div class="card" style="height: 100%;">
+            <h2>Heranalyseren</h2>
+            <p style="color: #aaa; margin-bottom: 1rem;">
+                Voer alleen de AI-datering opnieuw uit met de bijgewerkte context.
+                Gezichtsdetectie en labels blijven bewaard.
+            </p>
+            <button type="submit" class="btn-secondary"
+                    onclick="this.disabled=true; this.textContent='Starten…'; this.form.submit();">
+                Heranalyseer (behoud gezichtslabels)
+            </button>
+        </div>
+    </form>
+    {% endif %}
+</div>
+
+{% if album_data.analysis_status == 'done' %}
+<div class="actions" style="margin-top: 1rem;">
+    <a href="/album/{{ album_rel }}/results" class="btn btn-secondary">Bekijk analyseresultaten</a>
+    <a href="/album/{{ album_rel }}/dates" class="btn btn-secondary">Datums beheren</a>
+</div>
+{% endif %}
 
 <script>
 let msCount = {{ album_data.milestones | length }};
+const albumRel = {{ album_rel | tojson }};
+const photoFilenames = {{ photo_filenames_json }};
+
+function updatePreview(input) {
+    const idx = parseInt(input.value) - 1;
+    const row = input.closest('.milestone-row');
+    const preview = row.querySelector('.ms-preview');
+    if (!preview) return;
+    if (idx >= 0 && idx < photoFilenames.length) {
+        preview.src = `/thumb/${albumRel}/__file__/${photoFilenames[idx]}?size=80`;
+        preview.hidden = false;
+    } else {
+        preview.hidden = true;
+    }
+}
+
+// Init previews for existing milestones on page load
+document.querySelectorAll('.milestone-row input[type="number"]').forEach(updatePreview);
+
 function addMilestone() {
     const div = document.createElement('div');
     div.className = 'milestone-row';
     div.innerHTML = `
-        <div>
+        <div style="position:relative;">
             <label>Foto #</label>
-            <input type="number" name="ms_photo_${msCount}" min="1" max="{{ photo_count }}" style="width: 80px;">
+            <input type="number" name="ms_photo_${msCount}" min="1" max="{{ photo_count }}" style="width:80px;"
+                   oninput="updatePreview(this)">
+            <img class="ms-preview" hidden style="width:60px;height:60px;object-fit:cover;border-radius:4px;vertical-align:middle;margin-left:0.4rem;" alt="">
         </div>
-        <div style="flex: 1;">
+        <div style="flex:1;">
             <label>Datum</label>
             <input type="date" name="ms_date_${msCount}">
         </div>
-        <div style="flex: 2;">
+        <div style="flex:2;">
             <label>Beschrijving</label>
             <input type="text" name="ms_desc_${msCount}" placeholder="bijv. Verjaardag papa">
         </div>

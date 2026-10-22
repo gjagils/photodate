@@ -6,11 +6,37 @@
 <div class="card">
     <h2>Fotoalbums</h2>
     <div class="folder-list">
-        {% for folder, label in folders %}
-        <a href="/album/{{ label }}">{{ label }}</a>
+        {% for folder, label, status in folders %}
+        <a href="{% if status == 'bezig' %}/album/{{ label }}/progress{% else %}/album/{{ label }}{% endif %}">
+            <span>{{ label }}</span>
+            <span class="album-status album-status--{{ status }}">{{ status }}</span>
+        </a>
         {% else %}
         <p style="color: #aaa;">Geen mappen met foto's gevonden.</p>
         {% endfor %}
     </div>
 </div>
+
+<style>
+.folder-list a {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+.album-status {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 0.2em 0.6em;
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+.album-status--nieuw       { background: #1a2a3a; color: #7ab3e8; }
+.album-status--geanalyseerd{ background: #1a3a28; color: #4ecca3; }
+.album-status--toegepast   { background: #2a3a1a; color: #7acc4e; }
+.album-status--bezig       { background: #3a2a10; color: #f0a500; }
+.album-status--fout        { background: #3a1212; color: #e94560; }
+</style>
 {% endblock %}

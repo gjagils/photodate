@@ -1,3 +1,5 @@
+import asyncio
+import json
 import logging
 import os
 import shutil
@@ -7,8 +9,8 @@ from io import BytesIO
 from pathlib import Path
 
 import openai
-from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from PIL import Image
 
@@ -16,25 +18,58 @@ from .analyzer import analyze_album_full
 from .exif import read_exif_date, write_exif_date
 from .faces import detect_faces_in_album
 from .models import PhotoInfo
-from .storage import AlbumData, FamilyMember, GlobalSettings, Milestone
+from .storage import (
+    STORAGE_DIR,
+    AlbumData,
+    FaceProfile,
+    FamilyMember,
+    GlobalSettings,
+    Milestone,
+)
 
 logger = logging.getLogger(__name__)
+
+# HEIC support — optional dependency
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+    EXTENSIONS = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".heic", ".heif"}
+    logger.info("HEIC/HEIF ondersteuning ingeschakeld")
+except ImportError:
+    EXTENSIONS = {".jpg", ".jpeg", ".png", ".tiff", ".tif"}
+
+SKIP_DIRS = {"@eaDir", "#recycle", ".git"}
+
+THUMB_CACHE_DIR = STORAGE_DIR / ".thumbcache"
 
 app = FastAPI(title="Photodate")
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
-EXTENSIONS = {".jpg", ".jpeg", ".png", ".tiff", ".tif"}
-SKIP_DIRS = {"@eaDir", "#recycle", ".git"}
+# In-memory analysis job state (resets on restart; persisted status in AlbumData)
+_analysis_jobs: dict[str, dict] = {}
 
 
-# --- Helpers ---
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _get_photos_roots() -> list[Path]:
     raw = os.environ.get("PHOTOS_PATHS", os.environ.get("PHOTOS_PATH", "/photos"))
     return [Path(p.strip()) for p in raw.split(",") if p.strip()]
 
 
-def _get_all_albums() -> list[tuple[Path, str]]:
+def _album_status_label(album_data: AlbumData) -> str:
+    if album_data.applied_count > 0:
+        return "toegepast"
+    if album_data.analysis_status == "done" and album_data.photo_dates:
+        return "geanalyseerd"
+    if album_data.analysis_status == "running":
+        return "bezig"
+    if album_data.analysis_status == "error":
+        return "fout"
+    return "nieuw"
+
+
+def _get_all_albums() -> list[tuple[Path, str, str]]:
+    """Return (folder, rel_label, status) for every album under all roots."""
     albums = []
     for root in _get_photos_roots():
         if not root.exists():
@@ -44,8 +79,15 @@ def _get_all_albums() -> list[tuple[Path, str]]:
             dirpath = Path(dirpath)
             has_photos = any(Path(f).suffix.lower() in EXTENSIONS for f in filenames)
             if has_photos and dirpath != root:
-                rel = dirpath.relative_to(root)
-                albums.append((dirpath, str(rel)))
+                rel = str(dirpath.relative_to(root))
+                album_data = AlbumData.load(rel)
+                # Check live job state too
+                job = _analysis_jobs.get(rel)
+                if job and job["status"] == "running":
+                    status = "bezig"
+                else:
+                    status = _album_status_label(album_data)
+                albums.append((dirpath, rel, status))
     albums.sort(key=lambda x: x[1])
     return albums
 
@@ -69,26 +111,239 @@ def _load_photos(folder: Path) -> list[PhotoInfo]:
     ]
 
 
-# --- Thumbnail endpoint ---
+# ── Thumbnail with disk cache ─────────────────────────────────────────────────
+
+def _thumbnail_bytes(folder: Path, album_rel: str, filename: str, size: int) -> bytes | None:
+    source = folder / filename
+    if not source.is_file():
+        return None
+
+    safe_rel = album_rel.replace("/", "__").replace("\\", "__")
+    cache_path = THUMB_CACHE_DIR / safe_rel / str(size) / (filename + ".jpg")
+
+    try:
+        if (
+            cache_path.exists()
+            and cache_path.stat().st_mtime >= source.stat().st_mtime
+        ):
+            return cache_path.read_bytes()
+    except OSError:
+        pass
+
+    img = Image.open(source)
+    img.thumbnail((size, size))
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=80)
+    data = buf.getvalue()
+
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_bytes(data)
+    except OSError:
+        pass
+
+    return data
+
 
 @app.get("/thumb/{album_rel:path}/__file__/{filename}")
 async def thumbnail(album_rel: str, filename: str, size: int = 150):
     folder = _find_album(album_rel)
     if not folder:
         return Response(status_code=404)
-    filepath = folder / filename
-    if not filepath.is_file():
+    data = _thumbnail_bytes(folder, album_rel, filename, size)
+    if data is None:
         return Response(status_code=404)
-    img = Image.open(filepath)
-    img.thumbnail((size, size))
-    if img.mode not in ("RGB", "L"):
-        img = img.convert("RGB")
-    buf = BytesIO()
-    img.save(buf, format="JPEG", quality=80)
-    return Response(content=buf.getvalue(), media_type="image/jpeg")
+    return Response(content=data, media_type="image/jpeg")
 
 
-# --- Page: Home (album list, only directories) ---
+# ── Async analysis ────────────────────────────────────────────────────────────
+
+async def _run_analysis_task(album_rel: str, skip_faces: bool = False) -> None:
+    job = _analysis_jobs[album_rel]
+    album_data_ref: AlbumData | None = None
+    try:
+        folder = _find_album(album_rel)
+        if not folder:
+            raise ValueError(f"Album niet gevonden: {album_rel}")
+
+        photos = _load_photos(folder)
+        album_data_ref = AlbumData.load(album_rel)
+        settings = GlobalSettings.load()
+
+        # Step 1: Face detection (CPU-bound → thread pool)
+        if not skip_faces:
+            job.update({"step": "faces", "progress": 0, "total": len(photos)})
+            try:
+                face_results = await asyncio.to_thread(
+                    detect_faces_in_album,
+                    [p.path for p in photos],
+                    [{"name": fp.name, "encoding": fp.encoding} for fp in settings.face_profiles],
+                )
+            except Exception as exc:
+                logger.warning("Gezichtsdetectie overgeslagen: %s", exc)
+                face_results = {"clusters": [], "per_photo": {}}
+
+            album_data_ref.face_clusters = face_results["clusters"]
+            album_data_ref.faces_per_photo = {
+                str(k): v for k, v in face_results.get("per_photo", {}).items()
+            }
+            # Auto-apply labels from global profiles
+            for cluster in album_data_ref.face_clusters:
+                auto = cluster.get("auto_label", "")
+                if auto and cluster["id"] not in album_data_ref.face_labels:
+                    album_data_ref.face_labels[cluster["id"]] = auto
+
+        # Step 2: AI date analysis (sync OpenAI SDK → thread pool)
+        job.update({"step": "ai", "progress": 0, "total": len(photos)})
+
+        def _progress(step: str, current: int, total: int) -> None:
+            job.update({"step": step, "progress": current, "total": total})
+
+        client = openai.OpenAI()
+        album_data_ref = await asyncio.to_thread(
+            analyze_album_full,
+            photos,
+            album_data_ref,
+            settings,
+            client,
+            _progress,
+        )
+
+        job["status"] = "done"
+        logger.info("Analyse klaar: %s", album_rel)
+
+    except Exception as exc:
+        logger.error("Analyse mislukt voor %s: %s\n%s", album_rel, exc, traceback.format_exc())
+        job.update({"status": "error", "error": str(exc)})
+        if album_data_ref is not None:
+            album_data_ref.analysis_status = "error"
+            album_data_ref.analysis_error = str(exc)
+            album_data_ref.save()
+
+
+@app.post("/album/{album_rel:path}/analyze", response_class=HTMLResponse)
+async def album_analyze(request: Request, album_rel: str):
+    folder = _find_album(album_rel)
+    if not folder:
+        return HTMLResponse("Map niet gevonden", status_code=404)
+
+    _analysis_jobs[album_rel] = {
+        "status": "running",
+        "step": "start",
+        "progress": 0,
+        "total": 0,
+        "error": "",
+    }
+
+    # Mark as running in persistent storage so home page shows correct status
+    album_data = AlbumData.load(album_rel)
+    album_data.analysis_status = "running"
+    album_data.analysis_error = ""
+    album_data.save()
+
+    asyncio.create_task(_run_analysis_task(album_rel, skip_faces=False))
+
+    photos = _load_photos(folder)
+    return templates.TemplateResponse("progress.html", {
+        "request": request,
+        "album_rel": album_rel,
+        "folder_name": folder.name,
+        "total": len(photos),
+        "reanalyze": False,
+    })
+
+
+@app.post("/album/{album_rel:path}/reanalyze", response_class=HTMLResponse)
+async def album_reanalyze(request: Request, album_rel: str):
+    """Re-run AI analysis only (keeps existing face labels, skips face detection)."""
+    folder = _find_album(album_rel)
+    if not folder:
+        return HTMLResponse("Map niet gevonden", status_code=404)
+
+    _analysis_jobs[album_rel] = {
+        "status": "running",
+        "step": "ai",
+        "progress": 0,
+        "total": 0,
+        "error": "",
+    }
+
+    album_data = AlbumData.load(album_rel)
+    album_data.analysis_status = "running"
+    album_data.analysis_error = ""
+    album_data.save()
+
+    asyncio.create_task(_run_analysis_task(album_rel, skip_faces=True))
+
+    photos = _load_photos(folder)
+    return templates.TemplateResponse("progress.html", {
+        "request": request,
+        "album_rel": album_rel,
+        "folder_name": folder.name,
+        "total": len(photos),
+        "reanalyze": True,
+    })
+
+
+@app.get("/album/{album_rel:path}/progress", response_class=HTMLResponse)
+async def album_progress_page(request: Request, album_rel: str):
+    folder = _find_album(album_rel)
+    if not folder:
+        return HTMLResponse("Map niet gevonden", status_code=404)
+    photos = _load_photos(folder)
+    return templates.TemplateResponse("progress.html", {
+        "request": request,
+        "album_rel": album_rel,
+        "folder_name": folder.name,
+        "total": len(photos),
+        "reanalyze": False,
+    })
+
+
+@app.get("/album/{album_rel:path}/status")
+async def album_status_endpoint(album_rel: str):
+    job = _analysis_jobs.get(album_rel)
+    if job is not None:
+        return JSONResponse(job)
+
+    album_data = AlbumData.load(album_rel)
+    status = album_data.analysis_status
+    # Running in storage but not in memory = container restarted mid-analysis
+    if status == "running":
+        status = "lost"
+    return JSONResponse({
+        "status": status,
+        "step": "",
+        "progress": 0,
+        "total": 0,
+        "error": album_data.analysis_error,
+    })
+
+
+# ── Page: Results (after analysis) ───────────────────────────────────────────
+
+@app.get("/album/{album_rel:path}/results", response_class=HTMLResponse)
+async def album_results_page(request: Request, album_rel: str):
+    folder = _find_album(album_rel)
+    if not folder:
+        return HTMLResponse("Map niet gevonden", status_code=404)
+    album_data = AlbumData.load(album_rel)
+    photos = _load_photos(folder)
+    # Convert string keys back to int for template iteration by photo.index
+    faces_per_photo = {int(k): v for k, v in album_data.faces_per_photo.items()}
+    return templates.TemplateResponse("results.html", {
+        "request": request,
+        "album_rel": album_rel,
+        "photos": photos,
+        "album_data": album_data,
+        "face_clusters": album_data.face_clusters,
+        "faces_per_photo": faces_per_photo,
+    })
+
+
+# ── Page: Home ────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
@@ -101,7 +356,7 @@ async def index(request: Request):
     })
 
 
-# --- Page: Global Settings (family members) ---
+# ── Page: Global Settings ─────────────────────────────────────────────────────
 
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request):
@@ -124,7 +379,9 @@ async def settings_save(request: Request):
         if name:
             members.append(FamilyMember(name=name, birthdate=birthdate, notes=notes))
         i += 1
-    settings = GlobalSettings(family_members=members)
+
+    settings = GlobalSettings.load()
+    settings.family_members = members
     settings.save()
     return templates.TemplateResponse("settings.html", {
         "request": request,
@@ -133,7 +390,15 @@ async def settings_save(request: Request):
     })
 
 
-# --- Page: Album context (step 1) ---
+@app.post("/settings/delete-face-profile/{profile_name}", response_class=HTMLResponse)
+async def delete_face_profile(request: Request, profile_name: str):
+    settings = GlobalSettings.load()
+    settings.face_profiles = [p for p in settings.face_profiles if p.name != profile_name]
+    settings.save()
+    return RedirectResponse("/settings", status_code=303)
+
+
+# ── Page: Album context ───────────────────────────────────────────────────────
 
 @app.get("/album/{album_rel:path}", response_class=HTMLResponse)
 async def album_context_page(request: Request, album_rel: str):
@@ -142,11 +407,13 @@ async def album_context_page(request: Request, album_rel: str):
         return HTMLResponse("Map niet gevonden", status_code=404)
     album_data = AlbumData.load(album_rel)
     photos = _load_photos(folder)
+    photo_filenames_json = json.dumps([p.path.name for p in photos])
     return templates.TemplateResponse("album_context.html", {
         "request": request,
         "album_rel": album_rel,
         "album_data": album_data,
         "photo_count": len(photos),
+        "photo_filenames_json": photo_filenames_json,
         "folder_name": folder.name,
     })
 
@@ -159,7 +426,6 @@ async def album_context_save(request: Request, album_rel: str):
     album_data.end_date = form.get("end_date", "").strip()
     album_data.context_notes = form.get("context_notes", "").strip()
 
-    # Parse milestones
     milestones = []
     i = 0
     while f"ms_photo_{i}" in form:
@@ -176,74 +442,58 @@ async def album_context_save(request: Request, album_rel: str):
     album_data.milestones = milestones
     album_data.save()
 
+    folder = _find_album(album_rel)
+    photos = _load_photos(folder)
+    photo_filenames_json = json.dumps([p.path.name for p in photos])
     return templates.TemplateResponse("album_context.html", {
         "request": request,
         "album_rel": album_rel,
         "album_data": album_data,
-        "photo_count": len(_load_photos(_find_album(album_rel))),
-        "folder_name": _find_album(album_rel).name,
+        "photo_count": len(photos),
+        "photo_filenames_json": photo_filenames_json,
+        "folder_name": folder.name,
         "saved": True,
     })
 
 
-# --- Page: Analyze (step 2: face detection + AI analysis) ---
-
-@app.post("/album/{album_rel:path}/analyze", response_class=HTMLResponse)
-async def album_analyze(request: Request, album_rel: str):
-    folder = _find_album(album_rel)
-    if not folder:
-        return HTMLResponse("Map niet gevonden", status_code=404)
-
-    photos = _load_photos(folder)
-    album_data = AlbumData.load(album_rel)
-    settings = GlobalSettings.load()
-
-    # Face detection (non-fatal: skip if library unavailable or crashes)
-    face_results: dict = {"clusters": [], "per_photo": {}}
-    try:
-        face_results = detect_faces_in_album([p.path for p in photos])
-    except Exception as exc:
-        logger.warning("Gezichtsdetectie mislukt (wordt overgeslagen): %s", exc)
-
-    # AI date analysis
-    try:
-        client = openai.OpenAI()
-        album_data = analyze_album_full(photos, album_data, settings, client)
-    except Exception as exc:
-        logger.error("AI-analyse mislukt: %s\n%s", exc, traceback.format_exc())
-        error_msg = str(exc)
-        return HTMLResponse(
-            f"<h1>Analysefout</h1><pre>{error_msg}</pre>"
-            f"<a href='/album/{album_rel}'>Terug</a>",
-            status_code=500,
-        )
-
-    return templates.TemplateResponse("results.html", {
-        "request": request,
-        "album_rel": album_rel,
-        "photos": photos,
-        "album_data": album_data,
-        "face_clusters": face_results["clusters"],
-        "faces_per_photo": face_results.get("per_photo", {}),
-    })
-
-
-# --- Page: Save face labels (from results page) ---
+# ── Page: Save face labels ────────────────────────────────────────────────────
 
 @app.post("/album/{album_rel:path}/faces", response_class=HTMLResponse)
 async def save_face_labels(request: Request, album_rel: str):
     form = await request.form()
     album_data = AlbumData.load(album_rel)
+    settings = GlobalSettings.load()
+    settings_changed = False
 
     for key, value in form.items():
-        if key.startswith("face_label_"):
-            face_id = key.replace("face_label_", "")
-            if value.strip():
-                album_data.face_labels[face_id] = value.strip()
+        if key.startswith("face_label_") and value.strip():
+            face_id = key[len("face_label_"):]
+            album_data.face_labels[face_id] = value.strip()
+
+            # Optionally save as global face profile
+            if form.get(f"face_save_global_{face_id}") == "1":
+                centroid = None
+                for cluster in album_data.face_clusters:
+                    if cluster.get("id") == face_id and "centroid" in cluster:
+                        centroid = cluster["centroid"]
+                        break
+                if centroid is not None:
+                    name = value.strip()
+                    existing = next(
+                        (p for p in settings.face_profiles if p.name == name), None
+                    )
+                    if existing:
+                        existing.encoding = centroid
+                    else:
+                        settings.face_profiles.append(
+                            FaceProfile(name=name, encoding=centroid)
+                        )
+                    settings_changed = True
 
     album_data.save()
+    if settings_changed:
+        settings.save()
 
-    # Redirect to date review page
     folder = _find_album(album_rel)
     photos = _load_photos(folder)
     return templates.TemplateResponse("dates.html", {
@@ -254,7 +504,7 @@ async def save_face_labels(request: Request, album_rel: str):
     })
 
 
-# --- Page: Date review (step 3) ---
+# ── Page: Date review ─────────────────────────────────────────────────────────
 
 @app.get("/album/{album_rel:path}/dates", response_class=HTMLResponse)
 async def date_review_page(request: Request, album_rel: str):
@@ -271,7 +521,7 @@ async def date_review_page(request: Request, album_rel: str):
     })
 
 
-# --- Page: Apply dates (step 4) ---
+# ── Page: Apply dates ─────────────────────────────────────────────────────────
 
 @app.post("/album/{album_rel:path}/apply", response_class=HTMLResponse)
 async def apply_dates(request: Request, album_rel: str):
@@ -294,10 +544,9 @@ async def apply_dates(request: Request, album_rel: str):
     # Copy not-mine photos to {root}/nietzelfgenomen/{album_rel}/
     copied = 0
     if not_mine:
-        root = _find_album(album_rel)
-        # Determine the photos root this album lives under
+        root_folder = _find_album(album_rel)
         for photos_root in _get_photos_roots():
-            if root and str(root).startswith(str(photos_root)):
+            if root_folder and str(root_folder).startswith(str(photos_root)):
                 dest_dir = photos_root / "nietzelfgenomen" / album_rel
                 dest_dir.mkdir(parents=True, exist_ok=True)
                 for fname in not_mine:
@@ -311,6 +560,7 @@ async def apply_dates(request: Request, album_rel: str):
 
     count = 0
     skipped = 0
+    errors = 0
     for key, value in form.items():
         if key.startswith("date_") and value:
             filename = key[5:]
@@ -323,8 +573,15 @@ async def apply_dates(request: Request, album_rel: str):
                     dt = date.fromisoformat(value)
                     write_exif_date(filepath, dt, backup=True)
                     count += 1
-                except (ValueError, Exception):
-                    pass
+                except ValueError:
+                    logger.warning("Ongeldige datum voor %s: %s", filename, value)
+                    errors += 1
+                except Exception as exc:
+                    logger.warning("Kon datum niet schrijven voor %s: %s", filename, exc)
+                    errors += 1
+
+    album_data.applied_count = count
+    album_data.save()
 
     return templates.TemplateResponse("applied.html", {
         "request": request,
@@ -333,4 +590,65 @@ async def apply_dates(request: Request, album_rel: str):
         "count": count,
         "skipped": skipped,
         "copied": copied,
+        "errors": errors,
+    })
+
+
+# ── Page: Backup restore ──────────────────────────────────────────────────────
+
+@app.get("/album/{album_rel:path}/backups", response_class=HTMLResponse)
+async def backups_page(request: Request, album_rel: str):
+    folder = _find_album(album_rel)
+    if not folder:
+        return HTMLResponse("Map niet gevonden", status_code=404)
+    photos = _load_photos(folder)
+    backups = [
+        p.path.name
+        for p in photos
+        if p.path.with_suffix(p.path.suffix + ".bak").exists()
+    ]
+    return templates.TemplateResponse("backups.html", {
+        "request": request,
+        "album_rel": album_rel,
+        "folder_name": folder.name,
+        "backups": backups,
+    })
+
+
+@app.post("/album/{album_rel:path}/restore")
+async def restore_backups(request: Request, album_rel: str):
+    form = await request.form()
+    folder = _find_album(album_rel)
+    if not folder:
+        return JSONResponse({"error": "Map niet gevonden"}, status_code=404)
+
+    restored = 0
+    errors = []
+    for key, value in form.items():
+        if key.startswith("restore_") and value == "1":
+            filename = key[len("restore_"):]
+            filepath = folder / filename
+            backup = filepath.with_suffix(filepath.suffix + ".bak")
+            if backup.exists():
+                try:
+                    shutil.copy2(backup, filepath)
+                    restored += 1
+                except Exception as exc:
+                    errors.append(f"{filename}: {exc}")
+            else:
+                errors.append(f"{filename}: geen backup gevonden")
+
+    photos = _load_photos(folder)
+    backups = [
+        p.path.name
+        for p in photos
+        if p.path.with_suffix(p.path.suffix + ".bak").exists()
+    ]
+    return templates.TemplateResponse("backups.html", {
+        "request": request,
+        "album_rel": album_rel,
+        "folder_name": folder.name,
+        "backups": backups,
+        "restored": restored,
+        "restore_errors": errors,
     })

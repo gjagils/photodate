@@ -1,11 +1,11 @@
-"""Judge how consecutive album photos belong together (same moment, same trip, new event)."""
+"""Judge how consecutive album photos belong together, their season and any holiday."""
 import base64
 import json
 import logging
 import os
 from io import BytesIO
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, NamedTuple, Optional
 
 from PIL import Image, ImageOps
 
@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 RELATIONS = ("moment", "reeks", "nieuw")
 SEASONS = ("lente", "zomer", "herfst", "winter", "onbekend")
+HOLIDAYS = ("sinterklaas", "kerst", "oudjaar", "pasen", "koninginnedag", "verjaardag", "geen")
 EVENTS_MODEL = os.environ.get("OPENAI_EVENTS_MODEL", "gpt-4o")
 BATCH_SIZE = 12
 THUMB_SIZE = 512
@@ -36,10 +37,32 @@ Schat per foto het seizoen (Nederland), alleen op duidelijke aanwijzingen:
 - "lente": bloesem, bollenvelden, jong blad, Pasen
 - "onbekend": binnenopnames of te weinig aanwijzingen. Gebruik dit liever dan te gokken.
 
+Geef per foto of het om een Nederlandse feestdag gaat, alleen bij duidelijke aanwijzingen:
+- "sinterklaas": Sinterklaas of Pieten, surprises, gedichten, schoen zetten, pakjesavond, intocht
+- "kerst": kerstboom met cadeaus, kerstdiner, kerststal
+- "oudjaar": vuurwerk, oliebollen, proosten om middernacht
+- "pasen": paaseieren, paashaas, eieren zoeken
+- "koninginnedag": oranje kleding of versiering, vrijmarkt, vlaggen, kinderspelen op straat
+- "verjaardag": taart met kaarsjes, cadeaus uitpakken, slingers, ballonnen, kring met visite
+- "geen": anders
+
+Geef bij een verjaardag de leeftijd van de jarige als die echt zichtbaar is (aantal kaarsjes, \
+een cijfer op taart, ballon, slinger of kaart; Abraham of Sarah is 50). Anders null.
+
 Antwoord alleen met JSON in deze vorm:
 {{"overgangen": [{m} waarden uit "moment", "reeks", "nieuw"], "labels": [{n} korte labels], \
-"seizoenen": [{n} waarden uit "lente", "zomer", "herfst", "winter", "onbekend"]}}
+"seizoenen": [{n} waarden uit "lente", "zomer", "herfst", "winter", "onbekend"], \
+"feestdagen": [{n} waarden uit "sinterklaas", "kerst", "oudjaar", "pasen", "koninginnedag", \
+"verjaardag", "geen"], "leeftijden": [{n} getallen of null]}}
 """
+
+
+class AlbumAnalysis(NamedTuple):
+    links: list[str]               # relation of photo i to photo i-1 (links[0] is "nieuw")
+    labels: list[str]
+    seasons: list[str]
+    holidays: list[str]
+    ages: list[Optional[int]]      # age of the birthday person, when visible
 
 
 def _encode(path: Path) -> str:
@@ -52,9 +75,17 @@ def _encode(path: Path) -> str:
     return base64.standard_b64encode(buf.getvalue()).decode()
 
 
+def _age(value) -> Optional[int]:
+    try:
+        age = int(value)
+    except (TypeError, ValueError):
+        return None
+    return age if 0 < age < 110 else None
+
+
 def classify_batch(client, paths: list[Path], album: str, period: str, model: str = EVENTS_MODEL
-                   ) -> tuple[list[str], list[str], list[str]]:
-    """Return (relations between consecutive photos, label per photo, season per photo)."""
+                   ) -> AlbumAnalysis:
+    """Analyse one batch; links[0] of the result is a placeholder for the batch's first photo."""
     n = len(paths)
     content: list[dict] = [{"type": "text", "text": PROMPT.format(n=n, m=n - 1, album=album, period=period)}]
     for i, path in enumerate(paths, 1):
@@ -74,13 +105,17 @@ def classify_batch(client, paths: list[Path], album: str, period: str, model: st
     except json.JSONDecodeError:
         logger.warning("Onleesbaar antwoord voor gebeurtenissen in %s", album)
         data = {}
-    relations = [r if r in RELATIONS else "nieuw" for r in data.get("overgangen", [])][: n - 1]
-    relations += ["nieuw"] * (n - 1 - len(relations))
-    labels = [str(l)[:60] for l in data.get("labels", [])][:n]
-    labels += [""] * (n - len(labels))
-    seasons = [s if s in SEASONS else "onbekend" for s in data.get("seizoenen", [])][:n]
-    seasons += ["onbekend"] * (n - len(seasons))
-    return relations, labels, seasons
+
+    def fit(values: list, length: int, fill):
+        values = values[:length]
+        return values + [fill] * (length - len(values))
+
+    relations = fit([r if r in RELATIONS else "nieuw" for r in data.get("overgangen", [])], n - 1, "nieuw")
+    labels = fit([str(l)[:60] for l in data.get("labels", [])], n, "")
+    seasons = fit([s if s in SEASONS else "onbekend" for s in data.get("seizoenen", [])], n, "onbekend")
+    holidays = fit([h if h in HOLIDAYS else "geen" for h in data.get("feestdagen", [])], n, "geen")
+    ages = fit([_age(a) for a in data.get("leeftijden", [])], n, None)
+    return AlbumAnalysis(["nieuw"] + relations, labels, seasons, holidays, ages)
 
 
 def detect_links(
@@ -90,27 +125,26 @@ def detect_links(
     period: str,
     model: str = EVENTS_MODEL,
     progress: Optional[Callable[[int, int], None]] = None,
-) -> tuple[list[str], list[str], list[str]]:
-    """Return (links, labels, seasons); links[i] is how photo i relates to photo i-1."""
+) -> AlbumAnalysis:
     n = len(paths)
-    links = ["nieuw"] * n
-    labels = [""] * n
-    seasons = ["onbekend"] * n
+    result = AlbumAnalysis(["nieuw"] * n, [""] * n, ["onbekend"] * n, ["geen"] * n, [None] * n)
+    seen = [False] * n
     start = 0
     while start < n - 1:
         end = min(start + BATCH_SIZE, n)
-        relations, batch_labels, batch_seasons = classify_batch(
-            client, paths[start:end], album, period, model,
-        )
-        for k, relation in enumerate(relations):
-            links[start + k + 1] = relation
-        for k, (label, season) in enumerate(zip(batch_labels, batch_seasons)):
-            if not labels[start + k]:
-                labels[start + k] = label
-            if seasons[start + k] == "onbekend":
-                seasons[start + k] = season
+        batch = classify_batch(client, paths[start:end], album, period, model)
+        for k in range(end - start):
+            i = start + k
+            if k > 0:
+                result.links[i] = batch.links[k]
+            if not seen[i]:
+                result.labels[i] = batch.labels[k]
+                result.seasons[i] = batch.seasons[k]
+                result.holidays[i] = batch.holidays[k]
+                result.ages[i] = batch.ages[k]
+                seen[i] = True
         if progress:
             progress(end, n)
         # Batches overlap by one photo so every transition is judged with context on both sides.
         start = end - 1
-    return links, labels, seasons
+    return result

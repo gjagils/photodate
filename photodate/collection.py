@@ -215,15 +215,95 @@ def _moment_season(seasons: list[str], group: list[int]) -> tuple[str, int]:
     return ranked[0]
 
 
+HOLIDAY_LABELS = {
+    "sinterklaas": "Sinterklaas", "kerst": "kerst", "oudjaar": "oud en nieuw",
+    "pasen": "Pasen", "koninginnedag": "Koninginnedag", "verjaardag": "verjaardag",
+}
+HOLIDAY_PER_DAY = 0.5
+HOLIDAY_MAX = 40.0
+
+
+@dataclass
+class Person:
+    name: str
+    born: date
+    died: Optional[date] = None
+
+
+def easter_sunday(year: int) -> date:
+    """Gregorian Easter (anonymous algorithm)."""
+    a, b, c = year % 19, year // 100, year % 100
+    d, e = b // 4, b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = c // 4, c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = (h + l - 7 * m + 114) % 31 + 1
+    return date(year, month, day)
+
+
+def holiday_windows(
+    kind: str, first: date, last: date, family: list[Person] = (), age: Optional[int] = None,
+) -> list[tuple[date, date]]:
+    """Date ranges in [first, last] where a photo of this holiday would be taken."""
+    windows: list[tuple[date, date]] = []
+    for y in range(first.year, last.year + 1):
+        if kind == "sinterklaas":
+            windows.append((date(y, 11, 15), date(y, 12, 6)))
+        elif kind == "kerst":
+            windows.append((date(y, 12, 24), date(y, 12, 26)))
+        elif kind == "oudjaar":
+            windows.append((date(y, 12, 31), date(y + 1, 1, 1)))
+        elif kind == "pasen":
+            e = easter_sunday(y)
+            windows.append((e - timedelta(days=1), e + timedelta(days=1)))
+        elif kind == "koninginnedag":
+            d = date(y, 4, 30) if y < 2014 else date(y, 4, 27)
+            windows.append((d, d))
+        elif kind == "verjaardag":
+            for p in family:
+                if age is not None and y != p.born.year + age:
+                    continue
+                try:
+                    birthday = date(y, p.born.month, p.born.day)
+                except ValueError:  # 29 February
+                    birthday = date(y, 2, 28)
+                if birthday <= p.born or (p.died and birthday > p.died):
+                    continue
+                # Parties are often held on a weekend shortly before or after.
+                windows.append((birthday - timedelta(days=3), birthday + timedelta(days=7)))
+    return [(a, b) for a, b in windows if b >= first and a <= last]
+
+
+def _moment_holiday(holidays: list[str], ages: list[Optional[int]], group: list[int]
+                    ) -> tuple[str, Optional[int]]:
+    votes: dict[str, int] = {}
+    for i in group:
+        if holidays[i] in HOLIDAY_LABELS:
+            votes[holidays[i]] = votes.get(holidays[i], 0) + 1
+    if not votes:
+        return "geen", None
+    kind = max(votes, key=votes.get)
+    age = next((ages[i] for i in group if holidays[i] == "verjaardag" and ages[i]), None)
+    return kind, age if kind == "verjaardag" else None
+
+
 def place_with_seasons(
     links: list[str], seasons: list[str], start: date, end: date, slack_days: int = SLACK_DAYS,
+    holidays: Optional[list[str]] = None, ages: Optional[list[Optional[int]]] = None,
+    family: list[Person] = (),
 ) -> list[datetime]:
-    """Order-preserving placement of moments that fits their seasons, near the even spread.
+    """Order-preserving placement of moments that fits seasons and holidays, near the even spread.
 
     Dynamic programming over (moment, day): each moment gets one day, days strictly increase,
-    and the cost adds season mismatch, drift from the even spread, days outside the album
-    period and gaps inside a series.
+    and the cost adds season mismatch, distance to a recognised holiday or family birthday,
+    drift from the even spread, days outside the album period and gaps inside a series.
     """
+    holidays = holidays or ["geen"] * len(links)
+    ages = ages or [None] * len(links)
     n = len(links)
     if n == 0:
         return []
@@ -244,12 +324,20 @@ def place_with_seasons(
         season, votes = _moment_season(seasons, groups[m])
         table, default = SEASON_MONTH_COST.get(season, ({}, 0))
         weight = SEASON_WEIGHT * min(1 + 0.25 * (votes - 1), 2.0) if votes else 0.0
+        kind, age = _moment_holiday(holidays, ages, groups[m])
+        windows = [
+            ((a - lo).days, (b - lo).days)
+            for a, b in holiday_windows(kind, lo, hi, family, age)
+        ] if kind != "geen" else []
         costs = []
         for t in range(total_days):
             outside = max(0, start_t - t) + max(0, t - end_t)
             c = DRIFT_PER_DAY * abs(t - base_t[m]) + OUTSIDE_PER_DAY * outside
             if weight:
                 c += weight * table.get(months[t], default)
+            if windows:
+                gap = min(max(a - t, 0, t - b) for a, b in windows)
+                c += min(HOLIDAY_MAX, HOLIDAY_PER_DAY * gap)
             costs.append(c)
         return costs
 
@@ -295,10 +383,11 @@ def period_label(start: Optional[date], end: Optional[date]) -> str:
     return f"{fmt(start)} – {fmt(end)}"
 
 
-def describe_estimate(dt: datetime, album_name: str, start: date, end: date) -> str:
+def describe_estimate(dt: datetime, album_name: str, start: date, end: date, note: str = "") -> str:
     # EXIF ImageDescription is ASCII-only, so no en dash here.
     period = period_label(start, end).replace("–", "-")
-    return f"Datum geschat: {MONTH_NAMES[dt.month]} {dt.year} (album {album_name}, {period})"
+    note = f", {note}" if note else ""
+    return f"Datum geschat: {MONTH_NAMES[dt.month]} {dt.year}{note} (album {album_name}, {period})"
 
 
 @dataclass
@@ -314,6 +403,9 @@ class CollectionAlbum:
     end_source: str = ""
     links: list[str] = field(default_factory=list)  # per photo: relation to the previous one
     seasons: list[str] = field(default_factory=list)  # per photo: season estimate
+    holidays: list[str] = field(default_factory=list)  # per photo: recognised holiday or "geen"
+    ages: list[Optional[int]] = field(default_factory=list)  # per photo: visible birthday age
+    family: list[Person] = field(default_factory=list)
 
     @property
     def complete(self) -> bool:
@@ -327,11 +419,25 @@ class CollectionAlbum:
     def has_seasons(self) -> bool:
         return len(self.seasons) == len(self.photos) and any(s in SEASON_MONTH_COST for s in self.seasons)
 
+    @property
+    def has_holidays(self) -> bool:
+        return len(self.holidays) == len(self.photos) and any(h in HOLIDAY_LABELS for h in self.holidays)
+
+    def holiday_note(self, path: Path) -> str:
+        if not self.has_holidays:
+            return ""
+        return HOLIDAY_LABELS.get(self.holidays[self.photos.index(path)], "")
+
     def planned(self) -> list[tuple[Path, datetime]]:
         if not self.complete:
             return []
-        if self.has_links and self.has_seasons:
-            dts = place_with_seasons(self.links, self.seasons, self.start, self.end)
+        if self.has_links and (self.has_seasons or self.has_holidays):
+            ages = self.ages if len(self.ages) == len(self.photos) else None
+            dts = place_with_seasons(
+                self.links, self.seasons if self.has_seasons else ["onbekend"] * len(self.photos),
+                self.start, self.end,
+                holidays=self.holidays if self.has_holidays else None, ages=ages, family=self.family,
+            )
         elif self.has_links:
             dts = spread_by_links(self.links, self.start, self.end)
         else:
@@ -462,9 +568,10 @@ def apply_album(album: CollectionAlbum, backup_dir: Path) -> tuple[dict[str, str
     errors: list[str] = []
     for path, dt in album.planned():
         try:
-            write_estimated_date(
-                path, dt, describe_estimate(dt, album.name, album.start, album.end), backup_dir
+            description = describe_estimate(
+                dt, album.name, album.start, album.end, album.holiday_note(path),
             )
+            write_estimated_date(path, dt, description, backup_dir)
             written[path.name] = dt.isoformat(timespec="minutes")
         except Exception as exc:
             logger.warning("Kon %s niet dateren: %s", path, exc)

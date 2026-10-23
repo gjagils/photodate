@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{% if reanalyze %}Heranalyseren{% else %}Analyseren{% endif %}</h1>
+<p style="color: #aaa; margin-bottom: 1.5rem;">Album: {{ album_rel }}</p>
+
+<div class="card" id="progress-card">
+    <h2 id="status-heading">Voorbereiding…</h2>
+    <p id="status-detail" style="color: #aaa; margin-bottom: 1.2rem;">Even geduld, dit kan enkele minuten duren.</p>
+
+    <div style="background: #0f3460; border-radius: 99px; height: 10px; overflow: hidden; margin-bottom: 1rem;">
+        <div id="progress-bar" style="height: 100%; width: 0%; background: #e94560; border-radius: 99px; transition: width 0.4s;"></div>
+    </div>
+    <p id="progress-text" style="color: #aaa; font-size: 0.85rem;">Wacht op start…</p>
+</div>
+
+<div class="card" id="error-card" hidden>
+    <h2 class="error">Analysefout</h2>
+    <pre id="error-text" style="color: #aaa; white-space: pre-wrap; font-size: 0.85rem;"></pre>
+    <div class="actions" style="margin-top: 1rem;">
+        <a href="/album/{{ album_rel }}" class="btn btn-secondary">Terug naar album</a>
+    </div>
+</div>
+
+<script>
+const albumRel = {{ album_rel | tojson }};
+const total = {{ total }};
+
+const STEP_LABELS = {
+    start:  'Voorbereiding…',
+    faces:  'Gezichten detecteren…',
+    ai:     'AI-datering uitvoeren…',
+    done:   'Klaar!',
+};
+
+async function poll() {
+    let data;
+    try {
+        const resp = await fetch(`/album/${albumRel}/status`);
+        data = await resp.json();
+    } catch (e) {
+        setTimeout(poll, 3000);
+        return;
+    }
+
+    const heading = document.getElementById('status-heading');
+    const detail = document.getElementById('status-text') || document.getElementById('status-detail');
+    const bar = document.getElementById('progress-bar');
+    const text = document.getElementById('progress-text');
+
+    if (data.status === 'done') {
+        bar.style.width = '100%';
+        heading.textContent = 'Analyse klaar ✓';
+        text.textContent = 'Doorsturen naar resultaten…';
+        setTimeout(() => {
+            window.location.href = `/album/${albumRel}/results`;
+        }, 600);
+        return;
+    }
+
+    if (data.status === 'error' || data.status === 'lost') {
+        document.getElementById('progress-card').hidden = true;
+        const errCard = document.getElementById('error-card');
+        errCard.hidden = false;
+        const msg = data.status === 'lost'
+            ? 'De analyse is onderbroken (container herstart?). Ga terug en probeer opnieuw.'
+            : (data.error || 'Onbekende fout');
+        document.getElementById('error-text').textContent = msg;
+        return;
+    }
+
+    // Update progress UI
+    heading.textContent = STEP_LABELS[data.step] || 'Bezig…';
+
+    let pct = 0;
+    if (data.total > 0) {
+        pct = Math.round((data.progress / data.total) * 100);
+    } else if (data.step === 'faces') {
+        pct = 20; // indeterminate face step
+    }
+
+    bar.style.width = pct + '%';
+
+    if (data.step === 'faces') {
+        text.textContent = 'Gezichten detecteren in ' + total + ' foto\'s…';
+    } else if (data.step === 'ai' && data.total > 0) {
+        const batch = Math.ceil(data.progress / 10);
+        const totalBatches = Math.ceil(data.total / 10);
+        text.textContent = `Batch ${batch} van ${totalBatches} (${data.progress}/${data.total} foto's)`;
+    } else {
+        text.textContent = '';
+    }
+
+    setTimeout(poll, 2000);
+}
+
+// Start polling after a short delay
+setTimeout(poll, 800);
+</script>
+{% endblock %}

@@ -7,22 +7,32 @@
 <div class="card">
     <h2>Gedetecteerde personen</h2>
     <p style="color: #aaa; margin-bottom: 1rem;">
-        De volgende gezichten zijn herkend. Geef namen op zodat de AI verjaardagen kan meenemen.
+        De volgende gezichten zijn herkend. Geef namen op; vink "Bewaar globaal" aan
+        om een naam te hergebruiken in andere albums.
     </p>
 
     <form method="post" action="/album/{{ album_rel }}/faces">
         {% for cluster in face_clusters %}
-        <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; padding: 0.8rem; background: #1a1a2e; border-radius: 6px;">
-            <div style="display: flex; gap: 0.3rem;">
+        <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; padding: 0.8rem; background: #1a1a2e; border-radius: 6px; flex-wrap: wrap;">
+            <div style="display: flex; gap: 0.3rem; flex-shrink: 0;">
                 {% for crop in cluster.sample_crops %}
-                <img src="data:image/jpeg;base64,{{ crop }}" style="width: 60px; height: 60px; border-radius: 50%; object-fit: cover;">
+                <img src="data:image/jpeg;base64,{{ crop }}" style="width: 60px; height: 60px; border-radius: 50%; object-fit: cover;" loading="lazy">
                 {% endfor %}
             </div>
-            <div style="flex: 1;">
-                <p style="font-size: 0.85em; color: #aaa;">Verschijnt op {{ cluster.count }} foto('s)</p>
+            <div style="flex: 1; min-width: 160px;">
+                <p style="font-size: 0.85em; color: #aaa; margin-bottom: 0.3rem;">
+                    Verschijnt op {{ cluster.count }} foto('s)
+                    {% if cluster.auto_label %}<span style="color:#4ecca3;"> — auto: {{ cluster.auto_label }}</span>{% endif %}
+                </p>
                 <input type="text" name="face_label_{{ cluster.id }}"
-                       value="{{ album_data.face_labels.get(cluster.id, '') }}"
+                       value="{{ album_data.face_labels.get(cluster.id, cluster.auto_label) }}"
                        placeholder="Naam van deze persoon">
+            </div>
+            <div style="flex-shrink: 0;">
+                <label style="cursor:pointer; font-size:0.82rem; color:#aaa; display:flex; align-items:center; gap:0.4rem; margin:0;">
+                    <input type="checkbox" name="face_save_global_{{ cluster.id }}" value="1">
+                    Bewaar als globaal profiel
+                </label>
             </div>
         </div>
         {% endfor %}
@@ -45,14 +55,13 @@
             {% set ns.current_group = group %}
             </div>
             <div class="group-header">
-                <strong>Groep {{ group }}</strong>
-                — {{ album_data.photo_reasoning.get(fname, '')[:80] }}
+                <strong>{{ album_data.photo_group_labels.get(group | string, 'Groep ' ~ group) }}</strong>
             </div>
             <div class="photo-grid">
         {% endif %}
 
         <div class="photo-card">
-            <img src="/thumb/{{ album_rel }}/__file__/{{ fname }}?size=200" alt="{{ fname }}">
+            <img src="/thumb/{{ album_rel }}/__file__/{{ fname }}?size=200" alt="{{ fname }}" loading="lazy">
             <div class="info">
                 <p><strong>{{ fname }}</strong></p>
                 <p>

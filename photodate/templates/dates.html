@@ -3,17 +3,21 @@
 <h1>Datums aanpassen</h1>
 <p style="color: #aaa; margin-bottom: 1.5rem;">Album: {{ album_rel }}</p>
 
-<div style="display: flex; gap: 1.5rem; margin-bottom: 1rem; flex-wrap: wrap;">
+<div style="display: flex; gap: 1.5rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center;">
     <label style="cursor: pointer; user-select: none;">
         <input type="checkbox" id="filter-no-exif"> Alleen foto's zonder EXIF-datum tonen
     </label>
     <label style="cursor: pointer; user-select: none;">
         <input type="checkbox" id="filter-hide-not-mine"> Niet zelf genomen verbergen
     </label>
+    <a href="/album/{{ album_rel }}/backups" class="btn btn-secondary" style="font-size:0.85rem;padding:0.4rem 1rem;">
+        Backups &amp; herstel
+    </a>
 </div>
 
 <form method="post" action="/album/{{ album_rel }}/apply">
     <table>
+        <thead>
         <tr>
             <th style="width: 130px;">Foto</th>
             <th>Bestand</th>
@@ -23,14 +27,42 @@
             <th>Redenering</th>
             <th title="Niet zelf genomen — sla datum schrijven over">Niet van mij</th>
         </tr>
+        </thead>
+        <tbody>
+        {% set ns = namespace(current_group=-1) %}
         {% for photo in photos %}
         {% set fname = photo.path.name %}
+        {% set group = album_data.photo_groups.get(fname, 0) %}
         {% set is_not_mine = fname in album_data.not_mine_photos %}
+
+        {% if group != ns.current_group %}
+            {% set ns.current_group = group %}
+            {# Group header row #}
+            <tr class="group-header-row" data-group="{{ group }}">
+                <td colspan="4" style="padding: 0.5rem 0.6rem 0.3rem;">
+                    <strong style="color: #e94560;">
+                        {{ album_data.photo_group_labels.get(group | string, 'Groep ' ~ group) }}
+                    </strong>
+                </td>
+                <td colspan="3" style="padding: 0.5rem 0.6rem 0.3rem;">
+                    <div style="display:flex; align-items:center; gap:0.4rem;">
+                        <label style="color:#aaa; font-size:0.8rem; white-space:nowrap; margin:0;">Alle:</label>
+                        <input type="date" class="bulk-date" data-group="{{ group }}"
+                               style="width:150px; font-size:0.8rem;"
+                               title="Pas op alle foto's in deze groep toe">
+                    </div>
+                </td>
+            </tr>
+        {% endif %}
+
         <tr class="photo-row{% if is_not_mine %} not-mine{% endif %}"
-            data-has-exif="{{ '1' if photo.original_exif_date else '0' }}">
+            data-has-exif="{{ '1' if photo.original_exif_date else '0' }}"
+            data-group="{{ group }}">
             <td>
                 <img src="/thumb/{{ album_rel }}/__file__/{{ fname }}?size=120"
-                     style="width: 120px; height: 80px; object-fit: cover; border-radius: 4px;">
+                     loading="lazy"
+                     style="width: 120px; height: 80px; object-fit: cover; border-radius: 4px;"
+                     alt="{{ fname }}">
             </td>
             <td>{{ fname }}</td>
             <td style="color: #888;">{{ photo.original_exif_date or "-" }}</td>
@@ -56,6 +88,7 @@
             </td>
         </tr>
         {% endfor %}
+        </tbody>
     </table>
 
     <div class="actions">
@@ -67,10 +100,21 @@
 <style>
 tr.not-mine td { opacity: 0.4; }
 tr.not-mine td:last-child { opacity: 1; }
+tr.group-header-row td { background: #0f3460; border-bottom: none; }
 </style>
 
 <script>
-// Toggle dim + disable date input when "niet van mij" is checked
+// Bulk date per group
+document.querySelectorAll('.bulk-date').forEach(input => {
+    input.addEventListener('change', () => {
+        const group = input.dataset.group;
+        const value = input.value;
+        document.querySelectorAll(`.photo-row[data-group="${group}"] input[type="date"]`)
+            .forEach(d => { if (!d.disabled) d.value = value; });
+    });
+});
+
+// Toggle not-mine
 document.querySelectorAll('.not-mine-cb').forEach(cb => {
     cb.addEventListener('change', () => {
         const row = cb.closest('tr');
@@ -85,9 +129,8 @@ document.querySelectorAll('.not-mine-cb').forEach(cb => {
     });
 });
 
-// Filter: geen EXIF
+// Filters
 document.getElementById('filter-no-exif').addEventListener('change', applyFilters);
-// Filter: verberg niet-van-mij
 document.getElementById('filter-hide-not-mine').addEventListener('change', applyFilters);
 
 function applyFilters() {

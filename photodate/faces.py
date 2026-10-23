@@ -3,19 +3,17 @@ import base64
 from collections import defaultdict
 from io import BytesIO
 from pathlib import Path
+from typing import Optional
 
 import face_recognition
 import numpy as np
 from PIL import Image
 
-# Tolerance for face matching (lower = stricter)
-FACE_TOLERANCE = 0.6
-# Resize for faster processing
+FACE_TOLERANCE = 0.55  # Slightly stricter than 0.6 to reduce false matches
 MAX_FACE_SIZE = 800
 
 
 def _load_image(path: Path) -> np.ndarray:
-    """Load and resize image for face detection."""
     img = Image.open(path)
     img.thumbnail((MAX_FACE_SIZE, MAX_FACE_SIZE))
     if img.mode != "RGB":
@@ -23,27 +21,40 @@ def _load_image(path: Path) -> np.ndarray:
     return np.array(img)
 
 
-def detect_faces_in_album(photo_paths: list[Path]) -> dict:
+def detect_faces_in_album(
+    photo_paths: list[Path],
+    global_profiles: Optional[list[dict]] = None,
+) -> dict:
     """Detect and cluster faces across all photos in an album.
+
+    Uses centroid-based clustering: each new face is compared to the running
+    mean encoding of existing clusters, giving better accuracy than greedy
+    first-match.
+
+    Args:
+        photo_paths: List of photo file paths in album order.
+        global_profiles: Optional list of {"name": str, "encoding": list[float]}
+            from GlobalSettings. Matching clusters are auto-labeled.
 
     Returns:
         {
             "clusters": [
                 {
                     "id": "face_0",
-                    "photo_indices": [0, 3, 7],  # which photos this face appears in
-                    "sample_crops": ["base64...", ...],  # up to 3 sample face crops
+                    "photo_indices": [0, 3, 7],
+                    "sample_crops": ["base64...", ...],
+                    "count": N,
+                    "centroid": [...],   # 128-dim encoding as list, for profile saving
+                    "auto_label": "",    # from global_profiles if matched
                 }
             ],
             "per_photo": {
-                0: ["face_0", "face_2"],  # face cluster IDs found in photo 0
-                3: ["face_0"],
+                0: ["face_0", "face_2"],
             }
         }
     """
     all_encodings: list[tuple[int, np.ndarray, tuple[int, int, int, int]]] = []
 
-    # Step 1: Detect faces in each photo
     for idx, path in enumerate(photo_paths):
         try:
             img = _load_image(path)
@@ -57,41 +68,58 @@ def detect_faces_in_album(photo_paths: list[Path]) -> dict:
     if not all_encodings:
         return {"clusters": [], "per_photo": {}}
 
-    # Step 2: Cluster faces by similarity
-    clusters: list[list[int]] = []  # Each cluster is a list of indices into all_encodings
-    assigned = [False] * len(all_encodings)
+    # Centroid-based clustering: compare each new face to the running mean
+    # of each cluster, assign to nearest within tolerance, else start new cluster
+    cluster_centroids: list[np.ndarray] = []
+    cluster_members: list[list[int]] = []  # indices into all_encodings
 
-    for i in range(len(all_encodings)):
-        if assigned[i]:
-            continue
-        cluster = [i]
-        assigned[i] = True
-        for j in range(i + 1, len(all_encodings)):
-            if assigned[j]:
-                continue
-            dist = face_recognition.face_distance(
-                [all_encodings[i][1]], all_encodings[j][1]
-            )[0]
-            if dist < FACE_TOLERANCE:
-                cluster.append(j)
-                assigned[j] = True
-        clusters.append(cluster)
+    for i, (_, enc, _) in enumerate(all_encodings):
+        best_cluster = -1
+        best_dist = FACE_TOLERANCE
 
-    # Step 3: Build result
+        for c_idx, centroid in enumerate(cluster_centroids):
+            dist = face_recognition.face_distance([centroid], enc)[0]
+            if dist < best_dist:
+                best_dist = dist
+                best_cluster = c_idx
+
+        if best_cluster >= 0:
+            cluster_members[best_cluster].append(i)
+            n = len(cluster_members[best_cluster])
+            cluster_centroids[best_cluster] = (
+                cluster_centroids[best_cluster] * (n - 1) + enc
+            ) / n
+        else:
+            cluster_centroids.append(enc.copy())
+            cluster_members.append([i])
+
+    # Build result
     result_clusters = []
     per_photo: dict[int, list[str]] = defaultdict(list)
 
-    for cluster_idx, member_indices in enumerate(clusters):
-        cluster_id = f"face_{cluster_idx}"
+    for c_idx, (centroid, member_indices) in enumerate(
+        zip(cluster_centroids, cluster_members)
+    ):
+        cluster_id = f"face_{c_idx}"
         photo_indices = sorted(set(all_encodings[m][0] for m in member_indices))
 
-        # Get up to 3 sample face crops as base64
+        # Try to auto-label from global profiles
+        auto_label = ""
+        if global_profiles:
+            for profile in global_profiles:
+                dist = face_recognition.face_distance(
+                    [np.array(profile["encoding"])], centroid
+                )[0]
+                if dist < FACE_TOLERANCE:
+                    auto_label = profile["name"]
+                    break
+
+        # Collect up to 3 sample face crops
         sample_crops = []
         for m in member_indices[:3]:
             photo_idx, _, (top, right, bottom, left) = all_encodings[m]
             try:
                 img = Image.open(photo_paths[photo_idx])
-                # Scale location back if image was resized
                 orig_w, orig_h = img.size
                 scale = max(orig_w, orig_h) / MAX_FACE_SIZE
                 if scale > 1:
@@ -99,7 +127,6 @@ def detect_faces_in_album(photo_paths: list[Path]) -> dict:
                     right = int(right * scale)
                     bottom = int(bottom * scale)
                     left = int(left * scale)
-                # Add some padding
                 pad = int((bottom - top) * 0.2)
                 crop = img.crop((
                     max(0, left - pad),
@@ -119,12 +146,13 @@ def detect_faces_in_album(photo_paths: list[Path]) -> dict:
             "photo_indices": photo_indices,
             "sample_crops": sample_crops,
             "count": len(photo_indices),
+            "centroid": centroid.tolist(),
+            "auto_label": auto_label,
         })
 
         for pi in photo_indices:
             per_photo[pi].append(cluster_id)
 
-    # Sort clusters by frequency (most common first)
     result_clusters.sort(key=lambda c: c["count"], reverse=True)
 
     return {

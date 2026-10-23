@@ -1,9 +1,11 @@
 import base64
 import json
 import logging
+import os
 import re
 from datetime import date
 from io import BytesIO
+from typing import Callable, Optional
 
 import openai
 from PIL import Image
@@ -13,12 +15,12 @@ from .storage import AlbumData, GlobalSettings
 
 logger = logging.getLogger(__name__)
 
-MAX_IMAGE_SIZE = 1024
-BATCH_SIZE = 10
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o")
+MAX_IMAGE_SIZE = int(os.environ.get("MAX_IMAGE_SIZE", "1024"))
+BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "10"))
 
 
 def _resize_and_encode(path) -> tuple[str, str]:
-    """Resize image to max MAX_IMAGE_SIZE px and return base64 + media type."""
     img = Image.open(path)
     img.thumbnail((MAX_IMAGE_SIZE, MAX_IMAGE_SIZE))
     if img.mode not in ("RGB", "L"):
@@ -30,7 +32,6 @@ def _resize_and_encode(path) -> tuple[str, str]:
 
 
 def _build_context(album_data: AlbumData, settings: GlobalSettings) -> str:
-    """Build a rich context string from album data and global settings."""
     parts = []
 
     if album_data.context_notes:
@@ -50,9 +51,7 @@ def _build_context(album_data: AlbumData, settings: GlobalSettings) -> str:
         parts.append("IJkpunten:\n" + "\n".join(ms_lines))
 
     if album_data.face_labels:
-        face_lines = []
-        for fid, name in album_data.face_labels.items():
-            face_lines.append(f"  - {fid}: {name}")
+        face_lines = [f"  - {fid}: {name}" for fid, name in album_data.face_labels.items()]
         parts.append("Geïdentificeerde personen:\n" + "\n".join(face_lines))
 
     if settings.family_members:
@@ -109,7 +108,6 @@ def analyze_batch(
     start_offset: int = 0,
     total: int = 0,
 ) -> list[dict]:
-    """Send a batch of photos to OpenAI for date estimation."""
     content: list[dict] = []
 
     for photo in photos:
@@ -132,14 +130,13 @@ def analyze_batch(
     content.append({"type": "text", "text": prompt})
 
     response = client.chat.completions.create(
-        model="gpt-4o",
+        model=OPENAI_MODEL,
         max_tokens=4096,
         messages=[{"role": "user", "content": content}],
     )
 
     response_text = response.choices[0].message.content
     logger.debug("OpenAI response (first 500 chars): %s", response_text[:500])
-    # Strip markdown code fences if present
     response_text = re.sub(r"^```(?:json)?\n?", "", response_text)
     response_text = re.sub(r"\n?```$", "", response_text)
 
@@ -151,14 +148,20 @@ def analyze_album_full(
     album_data: AlbumData,
     settings: GlobalSettings,
     client: openai.OpenAI,
+    progress_callback: Optional[Callable[[str, int, int], None]] = None,
 ) -> AlbumData:
-    """Analyze all photos and store results in AlbumData."""
+    """Analyze all photos and store results in AlbumData.
+
+    progress_callback(step, current, total) is called after each batch.
+    """
     context = _build_context(album_data, settings)
     total = len(photos)
 
     all_results: list[dict] = []
     for i in range(0, total, BATCH_SIZE):
         batch = photos[i : i + BATCH_SIZE]
+        if progress_callback:
+            progress_callback("ai", i, total)
         try:
             results = analyze_batch(batch, context, client, i, total)
         except Exception as exc:
@@ -171,13 +174,23 @@ def analyze_album_full(
             )
         all_results.extend(results)
 
-    # Store results in album data — match by position (zip stops at shortest)
+    if progress_callback:
+        progress_callback("ai", total, total)
+
+    # Store results — collect group labels by group_id
+    group_labels: dict[int, str] = {}
     for photo, result in zip(photos, all_results):
         fname = photo.path.name
         album_data.photo_dates[fname] = result.get("estimated_date", "")
         album_data.photo_reasoning[fname] = result.get("reasoning", "")
         album_data.photo_confidence[fname] = result.get("confidence", "low")
-        album_data.photo_groups[fname] = result.get("group", 0)
+        group_id = result.get("group", 0)
+        album_data.photo_groups[fname] = group_id
+        label = result.get("group_label", "")
+        if label:
+            group_labels[group_id] = label
 
+    album_data.photo_group_labels = {str(k): v for k, v in group_labels.items()}
+    album_data.analysis_status = "done"
     album_data.save()
     return album_data

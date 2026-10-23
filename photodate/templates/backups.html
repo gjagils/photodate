@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Backups &amp; herstel</h1>
+<p style="color: #aaa; margin-bottom: 1.5rem;">Album: {{ album_rel }}</p>
+
+{% if restored is defined %}
+<div class="alert alert-success">{{ restored }} foto('s) hersteld naar origineel.</div>
+{% endif %}
+{% if restore_errors %}
+<div style="background: #3a1212; border: 1px solid #e94560; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+    <p class="error" style="margin-bottom: 0.5rem;">Fouten bij herstellen:</p>
+    {% for err in restore_errors %}<p style="color:#aaa; font-size:0.85rem;">{{ err }}</p>{% endfor %}
+</div>
+{% endif %}
+
+{% if backups %}
+<div class="card">
+    <h2>Foto's met backup</h2>
+    <p style="color: #aaa; margin-bottom: 1rem;">
+        Vink de foto's aan die je wilt terugzetten naar het origineel (vóór datum-schrijven).
+    </p>
+    <form method="post" action="/album/{{ album_rel }}/restore">
+        <table>
+            <tr>
+                <th style="width:130px;">Foto</th>
+                <th>Bestand</th>
+                <th style="text-align:center;">Herstel</th>
+            </tr>
+            {% for fname in backups %}
+            <tr>
+                <td>
+                    <img src="/thumb/{{ album_rel }}/__file__/{{ fname }}?size=120"
+                         loading="lazy"
+                         style="width:120px;height:80px;object-fit:cover;border-radius:4px;" alt="">
+                </td>
+                <td>{{ fname }}</td>
+                <td style="text-align:center;">
+                    <input type="checkbox" name="restore_{{ fname }}" value="1">
+                </td>
+            </tr>
+            {% endfor %}
+        </table>
+
+        <div class="actions" style="margin-top: 1rem;">
+            <button type="submit" class="btn" onclick="return confirm('Originelen terugzetten? De huidige bestanden worden overschreven.')">
+                Geselecteerde herstellen
+            </button>
+            <a href="/album/{{ album_rel }}/dates" class="btn btn-secondary">Terug naar datums</a>
+        </div>
+    </form>
+</div>
+{% else %}
+<div class="card">
+    <p style="color: #aaa;">Geen backups gevonden voor dit album. Backups worden aangemaakt als je datums toepast.</p>
+    <div class="actions" style="margin-top: 1rem;">
+        <a href="/album/{{ album_rel }}" class="btn btn-secondary">Terug naar album</a>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

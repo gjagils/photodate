@@ -1,12 +1,35 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Datums toegepast</h1>
+
 <div class="card">
-    <p class="success">{{ count }} foto('s) bijgewerkt in {{ folder_name }}.</p>
-    {% if skipped %}<p style="color: #aaa; margin-top: 0.3rem;">{{ skipped }} foto('s) overgeslagen (niet zelf genomen){% if copied %} — {{ copied }} gekopieerd naar <code>nietzelfgenomen/{{ album_rel }}/</code>{% endif %}.</p>{% endif %}
-    <p style="color: #aaa; margin-top: 0.5rem;">Er is een backup gemaakt van elk origineel bestand (.bak).</p>
-    <br>
-    <a href="/album/{{ album_rel }}" class="btn">Terug naar album</a>
-    <a href="/" class="btn btn-secondary">Home</a>
+    <h2 class="success">✓ Klaar</h2>
+    <p>Album: <strong>{{ album_rel }}</strong></p>
+    <table style="margin-top: 1rem;">
+        <tr><td style="color:#aaa;">Datums geschreven</td><td><strong class="success">{{ count }}</strong></td></tr>
+        <tr><td style="color:#aaa;">Overgeslagen (niet van mij)</td><td>{{ skipped }}</td></tr>
+        {% if copied > 0 %}
+        <tr><td style="color:#aaa;">Gekopieerd naar nietzelfgenomen/</td><td>{{ copied }}</td></tr>
+        {% endif %}
+        {% if errors > 0 %}
+        <tr><td style="color:#aaa;">Schrijffouten</td><td class="error">{{ errors }} — zie logbestand</td></tr>
+        {% endif %}
+    </table>
+</div>
+
+<div class="card">
+    <h2>Backups</h2>
+    <p style="color: #aaa;">
+        Van elke gewijzigde foto is een originele kopie bewaard naast het bestand
+        (<code>.jpg.bak</code>). Je kunt foto's terugzetten via de backuppagina.
+    </p>
+    <div class="actions" style="margin-top: 1rem;">
+        <a href="/album/{{ album_rel }}/backups" class="btn btn-secondary">Backups &amp; herstel</a>
+    </div>
+</div>
+
+<div class="actions">
+    <a href="/" class="btn btn-secondary">Terug naar albums</a>
+    <a href="/album/{{ album_rel }}/dates" class="btn btn-secondary">Datums bekijken</a>
 </div>
 {% endblock %}

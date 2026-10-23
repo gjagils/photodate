@@ -123,3 +123,40 @@ def test_backup_keeps_first_original(tmp_path):
     coll.apply_album(album, backups)
     coll.apply_album(album, backups)
     assert piexif.ExifIFD.DateTimeOriginal not in piexif.load(str(backups / "boek_001.jpg")).get("Exif", {})
+
+
+def test_spread_by_links_same_moment_same_day():
+    links = ["nieuw", "moment", "moment", "nieuw", "reeks", "reeks", "nieuw"]
+    dts = coll.spread_by_links(links, date(1989, 1, 1), date(1989, 12, 31))
+    assert dts[0].date() == dts[1].date() == dts[2].date()
+    assert (dts[4].date() - dts[3].date()).days == 1
+    assert (dts[5].date() - dts[4].date()).days == 1
+    assert dts[-1].date() == date(1989, 12, 31)
+    assert all(a < b for a, b in zip(dts, dts[1:]))
+
+
+def test_spread_by_links_without_new_events_spreads_series():
+    dts = coll.spread_by_links(["nieuw", "reeks", "reeks"], date(2000, 1, 1), date(2000, 1, 11))
+    assert [d.day for d in dts] == [1, 6, 11]
+
+
+def test_spread_by_links_short_period_stays_in_bounds():
+    links = ["nieuw"] + ["reeks"] * 30 + ["nieuw"] * 5
+    dts = coll.spread_by_links(links, date(2000, 1, 1), date(2000, 1, 10))
+    assert dts[-1].date() <= date(2000, 1, 10)
+    assert all(a < b for a, b in zip(dts, dts[1:]))
+
+
+def test_moment_count():
+    assert coll.moment_count(["nieuw", "moment", "reeks", "moment", "nieuw"]) == 3
+    assert coll.moment_count([]) == 0
+
+
+def test_planned_uses_links_when_complete(tmp_path):
+    _make_album(tmp_path / "Gils", "IX - Okt '88 tot Jan '90", 3)
+    album = coll.load_collection(tmp_path / "Gils", "Gils")[0]
+    album.links = ["nieuw", "moment", "moment"]
+    days = {dt.date() for _, dt in album.planned()}
+    assert days == {date(1988, 10, 1)}
+    album.links = ["nieuw", "moment"]  # stale: wrong length -> ignored
+    assert len({dt.date() for _, dt in album.planned()}) == 3

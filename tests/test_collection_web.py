@@ -82,3 +82,26 @@ def test_save_period_and_apply_single_album(client):
     c.post("/collection/Gils/restore", data={"album": "Gils/XII"})
     restored = piexif.load(str(photos / "Gils" / "XII" / "boek_003.jpg"))
     assert piexif.ExifIFD.DateTimeOriginal not in restored.get("Exif", {})
+
+
+def test_detect_events_then_date_same_moment_same_day(client, monkeypatch):
+    c, photos = client
+    from photodate import web
+    from tests.test_events import FakeClient
+    monkeypatch.setattr(web.openai, "OpenAI", lambda: FakeClient("moment"))
+
+    album = "Gils/IX - Okt '88 tot Jan '90"
+    c.post("/collection/Gils/apply", data={"album": album, "steps": "events"})
+    _wait_done(c, "Gils")
+    page = c.get("/collection/Gils").text
+    assert "1 momenten" in page
+    untouched = piexif.load(str(photos / album / "boek_001.jpg"))
+    assert piexif.ExifIFD.DateTimeOriginal not in untouched.get("Exif", {})
+
+    c.post("/collection/Gils/apply", data={"album": album})
+    _wait_done(c, "Gils")
+    stamps = {
+        piexif.load(str(photos / album / f"boek_{i:03d}.jpg"))["Exif"][piexif.ExifIFD.DateTimeOriginal][:10]
+        for i in range(1, 4)
+    }
+    assert stamps == {b"1988:10:01"}

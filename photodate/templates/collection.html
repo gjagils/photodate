@@ -3,8 +3,10 @@
 <h1>{{ rel.split('/')[-1] }}</h1>
 <p style="color:#aaa; margin-bottom:1.5rem; max-width:65ch;">
     Elke foto krijgt een datum binnen de periode van zijn album, in de volgorde van het album.
-    Geen AI en niets invullen: de periode komt uit de mapnaam of van het album ervoor en erna.
-    In de foto komt ook "Datum geschat: …" te staan. De originelen worden bewaard.
+    Niets invullen: de periode komt uit de mapnaam of van het album ervoor en erna.
+    Laat je eerst de gebeurtenissen herkennen (AI), dan krijgen foto's van hetzelfde moment
+    dezelfde dag en lopen vakanties per dag door. In de foto komt "Datum geschat: …" te staan.
+    De originelen worden bewaard.
 </p>
 
 {% if saved %}<div class="alert alert-success">Periodes opgeslagen.</div>{% endif %}
@@ -12,14 +14,19 @@
 {% if job %}
 <div class="card job job--{{ job.status }}">
     {% if job.status == 'running' %}
-        <strong>Bezig met dateren…</strong>
+        <strong>{% if 'events' in job.steps %}Bezig met gebeurtenissen herkennen…{% else %}Bezig met dateren…{% endif %}</strong>
         {{ job.albums_done }} van {{ job.albums_total }} albums klaar
-        {% if job.current %}· nu: {{ job.current }}{% endif %}
-        · {{ job.photos }} foto's
+        {% if job.current %}· nu: {{ job.current }}{% if job.detail %} ({{ job.detail }}){% endif %}{% endif %}
         <script>setTimeout(() => location.reload(), 3000);</script>
     {% elif job.status == 'done' %}
-        <strong>Klaar.</strong> {{ job.photos }} foto's in {{ job.albums_done }} album(s) gedateerd.
-        Laat je foto-app de metadata vernieuwen (Synology Photos: herindexeren, Immich: "metadata vernieuwen").
+        <strong>Klaar.</strong>
+        {% if 'events' in job.steps %}{{ job.moments }} momenten herkend in {{ job.albums_done }} album(s).{% endif %}
+        {% if 'dates' in job.steps %}
+            {{ job.photos }} foto's gedateerd.
+            Laat je foto-app de metadata vernieuwen (Synology Photos: herindexeren, Immich: "metadata vernieuwen").
+        {% else %}
+            Controleer het voorbeeld en klik op "Dateer" om de datums te schrijven.
+        {% endif %}
     {% else %}
         <strong>Er ging iets mis.</strong>
     {% endif %}
@@ -34,10 +41,18 @@
 <div class="card">
     <div class="actions" style="justify-content:space-between; align-items:center; margin-top:0;">
         <div><strong>{{ ready_albums }}</strong> albums met volledige periode · <strong>{{ ready_photos }}</strong> foto's</div>
-        <form method="post" action="/collection/{{ rel }}/apply">
-            <input type="hidden" name="album" value="__all__">
-            <button type="submit" {% if job and job.status == 'running' %}disabled{% endif %}>Dateer alle albums</button>
-        </form>
+        <div class="actions" style="margin:0;">
+            <form method="post" action="/collection/{{ rel }}/apply">
+                <input type="hidden" name="album" value="__all__">
+                <input type="hidden" name="steps" value="events">
+                <button type="submit" class="btn-secondary" {% if job and job.status == 'running' %}disabled{% endif %}
+                        title="Gebruikt OpenAI; enkele centen per album">Herken gebeurtenissen (AI)</button>
+            </form>
+            <form method="post" action="/collection/{{ rel }}/apply">
+                <input type="hidden" name="album" value="__all__">
+                <button type="submit" {% if job and job.status == 'running' %}disabled{% endif %}>Dateer alle albums</button>
+            </form>
+        </div>
     </div>
 </div>
 
@@ -56,7 +71,7 @@
         <tr>
             <td>
                 <a href="/album/{{ a.rel }}">{{ a.name }}</a>
-                <div class="muted">{{ a.photos|length }} foto's{% if r.dated %} · <span class="success">{{ r.dated }} gedateerd</span>{% endif %}</div>
+                <div class="muted">{{ a.photos|length }} foto's{% if r.moments %} · {{ r.moments }} momenten{% endif %}{% if r.dated %} · <span class="success">{{ r.dated }} gedateerd</span>{% endif %}</div>
             </td>
             <td>
                 {% if a.complete %}{{ period_label(a.start, a.end) }}{% else %}<span class="warning">{{ period_label(a.start, a.end) }}</span>{% endif %}
@@ -86,6 +101,12 @@
                 {% endif %}
             </td>
             <td class="row-actions">
+                <form method="post" action="/collection/{{ rel }}/apply">
+                    <input type="hidden" name="album" value="{{ a.rel }}">
+                    <input type="hidden" name="steps" value="events">
+                    <button type="submit" class="btn-secondary small" {% if job and job.status == 'running' %}disabled{% endif %}>
+                        {% if r.moments %}Opnieuw herkennen{% else %}Herken gebeurtenissen{% endif %}</button>
+                </form>
                 {% if a.complete %}
                 <form method="post" action="/collection/{{ rel }}/apply">
                     <input type="hidden" name="album" value="{{ a.rel }}">

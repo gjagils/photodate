@@ -210,3 +210,53 @@ def test_planned_prefers_seasons_when_present(tmp_path):
     album.seasons = ["zomer", "onbekend", "onbekend"]
     first = album.planned()[0][1]
     assert first.date() < date(1988, 10, 1)
+
+
+def _jpg_with_orientation(path, orientation=None):
+    Image.new("RGB", (60, 40), (200, 30, 30)).save(path)
+    if orientation:
+        piexif.insert(piexif.dump({"0th": {piexif.ImageIFD.Orientation: orientation}}), str(path))
+    return path
+
+
+def _pixels_hash(path):
+    # Compressed image data from the start-of-scan marker on: unchanged means no re-encode.
+    import hashlib
+    data = path.read_bytes()
+    return hashlib.md5(data[data.index(b"\xff\xda"):]).hexdigest()
+
+
+def test_absolute_rotation_composes_with_existing_orientation(tmp_path):
+    plain = _jpg_with_orientation(tmp_path / "a.jpg")
+    phone = _jpg_with_orientation(tmp_path / "b.jpg", 6)      # already shown turned 90°
+    mirrored = _jpg_with_orientation(tmp_path / "c.jpg", 2)
+    assert coll.absolute_rotation(plain, 180) == 180
+    assert coll.absolute_rotation(phone, 0) == 90
+    assert coll.absolute_rotation(phone, 90) == 180
+    assert coll.absolute_rotation(mirrored, 90) is None
+
+
+def test_write_orientation_keeps_pixels_and_mtime(tmp_path):
+    path = _jpg_with_orientation(tmp_path / "scan.jpg")
+    os.utime(path, (600_000_000, 600_000_000))
+    before = _pixels_hash(path)
+    assert coll.write_orientation(path, 180, tmp_path / "backups") is True
+    assert piexif.load(str(path))["0th"][piexif.ImageIFD.Orientation] == 3
+    assert _pixels_hash(path) == before
+    assert int(os.path.getmtime(path)) == 600_000_000
+    assert coll.write_orientation(path, 180, tmp_path / "backups") is False
+
+
+def test_apply_album_writes_orientation_and_rotations_only_step(tmp_path):
+    _make_album(tmp_path / "Gils", "IX - Okt '88 tot Jan '90", 3)
+    album = coll.load_collection(tmp_path / "Gils", "Gils")[0]
+    album.rotations = [180, 0, None]
+    coll.apply_album(album, tmp_path / "backups")
+    orientations = [piexif.load(str(p))["0th"].get(piexif.ImageIFD.Orientation) for p in album.photos]
+    assert orientations == [3, 1, None]
+    assert album.turn_count == 1
+
+    album.rotations = [180, 90, None]
+    turned, errors = coll.apply_rotations(album, tmp_path / "backups")
+    assert (turned, errors) == (1, [])
+    assert piexif.load(str(album.photos[1]))["0th"][piexif.ImageIFD.Orientation] == 6

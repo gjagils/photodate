@@ -101,6 +101,8 @@ class AlbumData:
     photo_links: dict[str, str] = field(default_factory=dict)
     photo_labels: dict[str, str] = field(default_factory=dict)  # filename -> short event label
     photo_seasons: dict[str, str] = field(default_factory=dict)  # filename -> lente|zomer|herfst|winter|onbekend
+    # Clockwise degrees (vs the raw pixels) to show the photo upright: 0 | 90 | 180 | 270
+    photo_rotations: dict[str, int] = field(default_factory=dict)
 
     def save(self) -> None:
         STORAGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -134,4 +136,5 @@ class AlbumData:
             photo_links=data.get("photo_links", {}),
             photo_labels=data.get("photo_labels", {}),
             photo_seasons=data.get("photo_seasons", {}),
+            photo_rotations=data.get("photo_rotations", {}),
         )

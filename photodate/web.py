@@ -13,7 +13,7 @@ import openai
 from fastapi import FastAPI, Form, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
-from PIL import Image, ImageOps
+from PIL import Image
 try:
     from pillow_heif import register_heif_opener
     register_heif_opener()
@@ -155,7 +155,7 @@ async def thumbnail(album_rel: str, filename: str, size: int = 150):
     filepath = folder / filename
     if not filepath.is_file():
         return Response(status_code=404)
-    img = ImageOps.exif_transpose(Image.open(filepath))
+    img = Image.open(filepath)
     img.thumbnail((size, size))
     if img.mode not in ("RGB", "L"):
         img = img.convert("RGB")
@@ -206,7 +206,6 @@ def _load_collection(rel: str) -> list[coll.CollectionAlbum] | None:
         data = AlbumData.load(album.rel)
         album.links = [data.photo_links.get(p.name, "") for p in album.photos]
         album.seasons = [data.photo_seasons.get(p.name, "onbekend") for p in album.photos]
-        album.rotations = [data.photo_rotations.get(p.name) for p in album.photos]
     return albums
 
 
@@ -214,19 +213,16 @@ def _detect_events(album: coll.CollectionAlbum, data: AlbumData, client, job: di
     def progress(done: int, total: int) -> None:
         job["detail"] = f"{done} van {total} foto's bekeken"
 
-    result = coll_events.detect_links(
+    links, labels, seasons = coll_events.detect_links(
         album.photos, client, album.name, coll.period_label(album.start, album.end), progress=progress,
     )
-    rotations = [coll.absolute_rotation(p, extra) for p, extra in zip(album.photos, result.rotations)]
-    data.photo_links = {p.name: link for p, link in zip(album.photos, result.links)}
-    data.photo_labels = {p.name: label for p, label in zip(album.photos, result.labels) if label}
-    data.photo_seasons = {p.name: season for p, season in zip(album.photos, result.seasons)}
-    data.photo_rotations = {p.name: r for p, r in zip(album.photos, rotations) if r is not None}
+    data.photo_links = {p.name: link for p, link in zip(album.photos, links)}
+    data.photo_labels = {p.name: label for p, label in zip(album.photos, labels) if label}
+    data.photo_seasons = {p.name: season for p, season in zip(album.photos, seasons)}
     data.save()
-    album.links = result.links
-    album.seasons = result.seasons
-    album.rotations = rotations
-    job["moments"] += coll.moment_count(result.links)
+    album.links = links
+    album.seasons = seasons
+    job["moments"] += coll.moment_count(links)
 
 
 def _run_collection_job(rel: str, targets: list[coll.CollectionAlbum], steps: set[str]) -> None:
@@ -252,13 +248,6 @@ def _run_collection_job(rel: str, targets: list[coll.CollectionAlbum], steps: se
                     _reindex_synology(album.folder / filename)
                 data.save()
                 job["photos"] += len(written)
-                job["errors"].extend(f"{album.name} – {e}" for e in errors)
-            elif "rotate" in steps:
-                turned, errors = coll.apply_rotations(album, coll.backup_dir_for(BACKUP_ROOT, album.rel))
-                for path in album.photos:
-                    if path.name in album.rotation_by_name():
-                        _reindex_synology(path)
-                job["turned"] += turned
                 job["errors"].extend(f"{album.name} – {e}" for e in errors)
             job["albums_done"] += 1
         job["status"] = "done"
@@ -288,7 +277,6 @@ async def collection_page(request: Request, rel: str, saved: bool = False):
             "has_backup": coll.backup_dir_for(BACKUP_ROOT, a.rel).is_dir(),
             "moments": coll.moment_count(a.links) if a.has_links else 0,
             "seasoned": sum(1 for s in a.seasons if s in coll.SEASON_MONTH_COST),
-            "turns": a.turn_count,
         })
     ready = [r for r in rows if r["album"].complete]
     return templates.TemplateResponse(request, "collection.html", {
@@ -322,21 +310,18 @@ async def collection_save_periods(request: Request, rel: str):
 async def collection_apply(request: Request, rel: str):
     form = await request.form()
     target = form.get("album", "")
-    steps = {
-        s for s in form.get("steps", "dates").split("+") if s in ("events", "dates", "rotate")
-    } or {"dates"}
+    steps = {s for s in form.get("steps", "dates").split("+") if s in ("events", "dates")} or {"dates"}
     job = _collection_jobs.get(rel)
     if job and job["status"] == "running":
         return RedirectResponse(f"/collection/{rel}", status_code=303)
     albums = await asyncio.to_thread(_load_collection, rel) or []
     targets = [
         a for a in albums
-        if (target == "__all__" or a.rel == target) and (a.complete or "dates" not in steps)
+        if (target == "__all__" or a.rel == target) and (a.complete or steps == {"events"})
     ]
     _collection_jobs[rel] = {
         "status": "running", "steps": sorted(steps), "current": "", "detail": "",
-        "albums_total": len(targets), "albums_done": 0, "photos": 0, "moments": 0, "turned": 0,
-        "errors": [],
+        "albums_total": len(targets), "albums_done": 0, "photos": 0, "moments": 0, "errors": [],
     }
     threading.Thread(target=_run_collection_job, args=(rel, targets, steps), daemon=True).start()
     return RedirectResponse(f"/collection/{rel}", status_code=303)

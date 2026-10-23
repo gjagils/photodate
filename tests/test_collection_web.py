@@ -39,6 +39,16 @@ def test_index_lists_collection(client):
     assert "/collection/Gils" in r.text
 
 
+def test_date_folders_are_not_collections():
+    from photodate.web import _collections
+    albums = [{"label": l} for l in [
+        "Fotobibliotheek/2001/01", "Fotobibliotheek/2001/02",
+        "MobileBackup/iPhone/2014", "MobileBackup/iPhone/2015",
+        "Gils/IX - Okt '88 tot Jan '90", "Gils/XII",
+    ]]
+    assert _collections(albums) == [("Gils", 2)]
+
+
 def test_collection_page_shows_periods(client):
     c, _ = client
     r = c.get("/collection/Gils")

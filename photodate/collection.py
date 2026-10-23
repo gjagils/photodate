@@ -435,10 +435,18 @@ class CollectionAlbum:
     def has_holidays(self) -> bool:
         return len(self.holidays) == len(self.photos) and any(h in HOLIDAY_LABELS for h in self.holidays)
 
-    def holiday_note(self, path: Path) -> str:
+    def holiday_note(self, path: Path, when: date) -> str:
+        """Name the holiday only when the placed date actually fits it (labels can be wrong)."""
         if not self.has_holidays:
             return ""
-        return HOLIDAY_LABELS.get(self.holidays[self.photos.index(path)], "")
+        i = self.photos.index(path)
+        kind = self.holidays[i]
+        if kind not in HOLIDAY_LABELS:
+            return ""
+        age = self.ages[i] if len(self.ages) == len(self.photos) else None
+        margin = timedelta(days=7)
+        windows = holiday_windows(kind, when - margin, when + margin, self.family, age)
+        return HOLIDAY_LABELS[kind] if windows else ""
 
     def planned(self) -> list[tuple[Path, datetime]]:
         if not self.complete:
@@ -581,7 +589,7 @@ def apply_album(album: CollectionAlbum, backup_dir: Path) -> tuple[dict[str, str
     for path, dt in album.planned():
         try:
             description = describe_estimate(
-                dt, album.name, album.start, album.end, album.holiday_note(path),
+                dt, album.name, album.start, album.end, album.holiday_note(path, dt.date()),
             )
             write_estimated_date(path, dt, description, backup_dir)
             written[path.name] = dt.isoformat(timespec="minutes")

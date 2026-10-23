@@ -293,3 +293,12 @@ def test_misrecognised_holiday_does_not_drag_a_run_of_moments():
     assert date(1988, 12, 24) <= days[9] < days[10] <= date(1988, 12, 26)
     assert date(1989, 1, 5) <= days[11] <= date(1989, 1, 7)
     assert all(date(1989, 1, 20) <= d <= date(1989, 2, 20) for d in days[12:18])
+
+
+def test_holiday_note_only_when_date_fits(tmp_path):
+    _make_album(tmp_path / "Gils", "IX - Okt '88 tot Jan '90", 2)
+    album = coll.load_collection(tmp_path / "Gils", "Gils")[0]
+    album.holidays = ["carnaval", "sinterklaas"]
+    assert album.holiday_note(album.photos[0], date(1989, 6, 16)) == ""
+    assert album.holiday_note(album.photos[0], date(1989, 2, 6)) == "carnaval"
+    assert album.holiday_note(album.photos[1], date(1988, 12, 9)) == "Sinterklaas"

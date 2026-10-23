@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ try:
 except ImportError:
     pass  # HEIC support optional
 
+from . import collection as coll
 from .analyzer import analyze_album_full
 from .duplicates import find_duplicates
 from .exif import read_exif_date, write_exif_date, parse_exif_date
@@ -35,6 +37,8 @@ EXTENSIONS = {".jpg", ".jpeg", ".png", ".tiff", ".tif"}
 ICLOUD_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".heic", ".heif", ".mov", ".mp4"}
 SKIP_DIRS = {"@eaDir", "#recycle", ".git", "_duplicates", "nietzelfgenomen"}
 SYNOINDEX = Path("/usr/syno/bin/synoindex")
+BACKUP_ROOT = STORAGE_DIR / "backups"
+_collection_jobs: dict[str, dict] = {}
 
 
 # --- Clean up stale "running" status files on startup ---
@@ -161,14 +165,145 @@ async def thumbnail(album_rel: str, filename: str, size: int = 150):
 
 # --- Page: Home (album list, only directories) ---
 
+def _collections(albums: list[dict]) -> list[tuple[str, int]]:
+    """Parent folders holding two or more albums."""
+    counts: dict[str, int] = {}
+    for album in albums:
+        parent = str(Path(album["label"]).parent)
+        if parent != ".":
+            counts[parent] = counts.get(parent, 0) + 1
+    return sorted((p, n) for p, n in counts.items() if n >= 2)
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     albums = _get_all_albums()
     roots = _get_photos_roots()
     return templates.TemplateResponse(request, "index.html", {
         "albums": albums,
+        "collections": _collections(albums),
         "photos_roots": roots,
     })
+
+
+# --- Page: Collection (date many albums at once from folder names, no AI) ---
+
+def _load_collection(rel: str) -> list[coll.CollectionAlbum] | None:
+    folder = _find_album(rel)
+    if not folder:
+        return None
+    manual = {}
+    for sub in folder.iterdir():
+        if sub.is_dir():
+            sub_rel = f"{rel}/{sub.name}"
+            data = AlbumData.load(sub_rel)
+            if data.start_date or data.end_date:
+                manual[sub_rel] = (data.start_date, data.end_date)
+    return coll.load_collection(folder, rel, manual)
+
+
+def _run_collection_job(rel: str, targets: list[coll.CollectionAlbum]) -> None:
+    job = _collection_jobs[rel]
+    try:
+        for album in targets:
+            job["current"] = album.name
+            written, errors = coll.apply_album(album, coll.backup_dir_for(BACKUP_ROOT, album.rel))
+            data = AlbumData.load(album.rel)
+            for filename, iso in written.items():
+                data.photo_dates[filename] = iso[:10]
+                data.photo_date_source[filename] = "spreiding"
+                _reindex_synology(album.folder / filename)
+            data.save()
+            job["photos"] += len(written)
+            job["albums_done"] += 1
+            job["errors"].extend(f"{album.name} – {e}" for e in errors)
+        job["status"] = "done"
+    except Exception as exc:
+        logger.exception("Collectie dateren mislukt")
+        job["status"] = "error"
+        job["errors"].append(str(exc))
+    job["current"] = ""
+
+
+@app.get("/collection/{rel:path}", response_class=HTMLResponse)
+async def collection_page(request: Request, rel: str, saved: bool = False):
+    albums = await asyncio.to_thread(_load_collection, rel)
+    if albums is None:
+        return HTMLResponse("Map niet gevonden", status_code=404)
+    rows = []
+    for a in albums:
+        plan = a.planned()
+        samples = [plan[0], plan[len(plan) // 2], plan[-1]] if plan else []
+        data = AlbumData.load(a.rel)
+        rows.append({
+            "album": a,
+            "samples": [(p.name, dt) for p, dt in samples],
+            "dated": sum(1 for s in data.photo_date_source.values() if s == "spreiding"),
+            "manual_start": data.start_date[:7],
+            "manual_end": data.end_date[:7],
+            "has_backup": coll.backup_dir_for(BACKUP_ROOT, a.rel).is_dir(),
+        })
+    ready = [r for r in rows if r["album"].complete]
+    return templates.TemplateResponse(request, "collection.html", {
+        "rel": rel,
+        "rows": rows,
+        "ready_albums": len(ready),
+        "ready_photos": sum(len(r["album"].photos) for r in ready),
+        "job": _collection_jobs.get(rel),
+        "saved": saved,
+        "period_label": coll.period_label,
+    })
+
+
+@app.post("/collection/{rel:path}/periods")
+async def collection_save_periods(request: Request, rel: str):
+    form = await request.form()
+    i = 0
+    while f"album_{i}" in form:
+        album_rel = form[f"album_{i}"]
+        start = coll.parse_manual_date(form.get(f"start_{i}", ""), is_end=False)
+        end = coll.parse_manual_date(form.get(f"end_{i}", ""), is_end=True)
+        data = AlbumData.load(album_rel)
+        data.start_date = start.isoformat() if start else ""
+        data.end_date = end.isoformat() if end else ""
+        data.save()
+        i += 1
+    return RedirectResponse(f"/collection/{rel}?saved=1", status_code=303)
+
+
+@app.post("/collection/{rel:path}/apply")
+async def collection_apply(request: Request, rel: str):
+    form = await request.form()
+    target = form.get("album", "")
+    job = _collection_jobs.get(rel)
+    if job and job["status"] == "running":
+        return RedirectResponse(f"/collection/{rel}", status_code=303)
+    albums = await asyncio.to_thread(_load_collection, rel) or []
+    targets = [a for a in albums if a.complete and (target == "__all__" or a.rel == target)]
+    _collection_jobs[rel] = {
+        "status": "running", "current": "", "albums_total": len(targets),
+        "albums_done": 0, "photos": 0, "errors": [],
+    }
+    threading.Thread(target=_run_collection_job, args=(rel, targets), daemon=True).start()
+    return RedirectResponse(f"/collection/{rel}", status_code=303)
+
+
+@app.post("/collection/{rel:path}/restore")
+async def collection_restore(request: Request, rel: str):
+    form = await request.form()
+    album_rel = form.get("album", "")
+    folder = _find_album(album_rel)
+    if folder:
+        await asyncio.to_thread(
+            coll.restore_album, folder, coll.backup_dir_for(BACKUP_ROOT, album_rel)
+        )
+        data = AlbumData.load(album_rel)
+        for filename in [f for f, s in data.photo_date_source.items() if s == "spreiding"]:
+            data.photo_date_source.pop(filename, None)
+            data.photo_dates.pop(filename, None)
+            _reindex_synology(folder / filename)
+        data.save()
+    return RedirectResponse(f"/collection/{rel}", status_code=303)
 
 
 # --- Page: Organize (dedicated workflow page) ---

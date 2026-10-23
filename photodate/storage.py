@@ -91,6 +91,7 @@ class AlbumData:
     # How each photo relates to the previous one: "moment" | "reeks" | "nieuw" (AI)
     photo_links: dict[str, str] = field(default_factory=dict)
     photo_labels: dict[str, str] = field(default_factory=dict)  # filename -> short event label
+    photo_seasons: dict[str, str] = field(default_factory=dict)  # filename -> lente|zomer|herfst|winter|onbekend
 
     def save(self) -> None:
         STORAGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -123,4 +124,5 @@ class AlbumData:
             photo_date_source=data.get("photo_date_source", {}),
             photo_links=data.get("photo_links", {}),
             photo_labels=data.get("photo_labels", {}),
+            photo_seasons=data.get("photo_seasons", {}),
         )

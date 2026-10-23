@@ -1,6 +1,6 @@
 """Tests for collection.py: period parsing, ordering, spreading and writing."""
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import piexif
@@ -160,3 +160,53 @@ def test_planned_uses_links_when_complete(tmp_path):
     assert days == {date(1988, 10, 1)}
     album.links = ["nieuw", "moment"]  # stale: wrong length -> ignored
     assert len({dt.date() for _, dt in album.planned()}) == 3
+
+
+def _days(dts):
+    return [d.date() for d in dts]
+
+
+def test_seasons_pull_summer_photos_before_an_autumn_start():
+    # Album "Okt '88 tot Jan '90": the first moments are clearly summer.
+    links = ["nieuw", "moment", "nieuw", "moment"] + ["nieuw"] * 20
+    seasons = ["zomer", "zomer", "zomer", "zomer"] + ["onbekend"] * 20
+    dts = coll.place_with_seasons(links, seasons, date(1988, 10, 1), date(1990, 1, 31))
+    days = _days(dts)
+    assert days[0].month in (6, 7, 8, 9) and days[0].year == 1988
+    assert days[2].month in (6, 7, 8, 9)
+    assert days[0] >= date(1988, 10, 1) - timedelta(days=coll.SLACK_DAYS)
+    assert all(a < b for a, b in zip(dts, dts[1:]))
+
+
+def test_seasons_put_winter_moment_in_winter():
+    links = ["nieuw"] * 30
+    seasons = ["onbekend"] * 30
+    seasons[10] = "winter"  # evenly this would land in early summer
+    dts = coll.place_with_seasons(links, seasons, date(1989, 1, 1), date(1989, 12, 31))
+    assert dts[10].month in (11, 12, 1, 2, 3)
+    assert all(a < b for a, b in zip(dts, dts[1:]))
+
+
+def test_without_seasons_placement_matches_even_spread():
+    links = ["nieuw", "moment", "reeks", "nieuw", "nieuw", "moment", "nieuw"]
+    seasons = ["onbekend"] * len(links)
+    placed = _days(coll.place_with_seasons(links, seasons, date(1990, 1, 1), date(1990, 7, 31)))
+    even = _days(coll.spread_by_links(links, date(1990, 1, 1), date(1990, 7, 31)))
+    assert placed == even
+
+
+def test_series_stay_on_consecutive_days_with_seasons():
+    links = ["nieuw", "reeks", "reeks", "reeks", "nieuw", "nieuw"]
+    seasons = ["zomer"] * 4 + ["onbekend"] * 2
+    days = _days(coll.place_with_seasons(links, seasons, date(1989, 1, 1), date(1989, 12, 31)))
+    assert [(b - a).days for a, b in zip(days[:4], days[1:4])] == [1, 1, 1]
+    assert days[0].month in (6, 7, 8)
+
+
+def test_planned_prefers_seasons_when_present(tmp_path):
+    _make_album(tmp_path / "Gils", "IX - Okt '88 tot Jan '90", 3)
+    album = coll.load_collection(tmp_path / "Gils", "Gils")[0]
+    album.links = ["nieuw", "nieuw", "nieuw"]
+    album.seasons = ["zomer", "onbekend", "onbekend"]
+    first = album.planned()[0][1]
+    assert first.date() < date(1988, 10, 1)

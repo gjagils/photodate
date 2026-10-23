@@ -178,6 +178,113 @@ def spread_by_links(links: list[str], start: date, end: date) -> list[datetime]:
     return _to_datetimes(start, offsets)
 
 
+def moment_groups(links: list[str]) -> list[list[int]]:
+    groups: list[list[int]] = []
+    for i, link in enumerate(links):
+        if i == 0 or link != "moment":
+            groups.append([i])
+        else:
+            groups[-1].append(i)
+    return groups
+
+
+# Cost per month for a photo that looks like a given season (0 = fits, higher = unlikely).
+SEASON_MONTH_COST = {
+    "zomer": ({6: 0, 7: 0, 8: 0, 5: 1, 9: 1, 4: 3, 10: 3}, 6),
+    "winter": ({12: 0, 1: 0, 2: 0, 11: 1, 3: 1, 10: 3, 4: 3}, 6),
+    "herfst": ({9: 0, 10: 0, 11: 0, 8: 1, 12: 1, 7: 3, 1: 3}, 5),
+    "lente": ({3: 0, 4: 0, 5: 0, 2: 1, 6: 1, 1: 3, 7: 3}, 5),
+}
+SEASON_WEIGHT = 8.0
+DRIFT_PER_DAY = 0.02       # moving a moment away from the even spread
+OUTSIDE_PER_DAY = 0.04     # extra, per day outside the album period
+REEKS_EXTRA_DAY = 0.3      # per extra day between moments of one series
+SLACK_DAYS = 120
+
+
+def _moment_season(seasons: list[str], group: list[int]) -> tuple[str, int]:
+    votes: dict[str, int] = {}
+    for i in group:
+        if seasons[i] in SEASON_MONTH_COST:
+            votes[seasons[i]] = votes.get(seasons[i], 0) + 1
+    if not votes:
+        return "onbekend", 0
+    ranked = sorted(votes.items(), key=lambda kv: -kv[1])
+    if len(ranked) > 1 and ranked[0][1] == ranked[1][1]:
+        return "onbekend", 0
+    return ranked[0]
+
+
+def place_with_seasons(
+    links: list[str], seasons: list[str], start: date, end: date, slack_days: int = SLACK_DAYS,
+) -> list[datetime]:
+    """Order-preserving placement of moments that fits their seasons, near the even spread.
+
+    Dynamic programming over (moment, day): each moment gets one day, days strictly increase,
+    and the cost adds season mismatch, drift from the even spread, days outside the album
+    period and gaps inside a series.
+    """
+    n = len(links)
+    if n == 0:
+        return []
+    groups = moment_groups(links)
+    lo = start - timedelta(days=slack_days)
+    hi = end + timedelta(days=slack_days)
+    total_days = (hi - lo).days + 1
+    if len(groups) > total_days:
+        return spread_by_links(links, start, end)
+
+    base = spread_by_links(links, start, end)
+    base_t = [(base[g[0]].date() - lo).days for g in groups]
+    months = [(lo + timedelta(days=t)).month for t in range(total_days)]
+    start_t, end_t = (start - lo).days, (end - lo).days
+    inf = float("inf")
+
+    def node_costs(m: int) -> list[float]:
+        season, votes = _moment_season(seasons, groups[m])
+        table, default = SEASON_MONTH_COST.get(season, ({}, 0))
+        weight = SEASON_WEIGHT * min(1 + 0.25 * (votes - 1), 2.0) if votes else 0.0
+        costs = []
+        for t in range(total_days):
+            outside = max(0, start_t - t) + max(0, t - end_t)
+            c = DRIFT_PER_DAY * abs(t - base_t[m]) + OUTSIDE_PER_DAY * outside
+            if weight:
+                c += weight * table.get(months[t], default)
+            costs.append(c)
+        return costs
+
+    prev = node_costs(0)
+    back: list[list[int]] = []
+    for m in range(1, len(groups)):
+        node = node_costs(m)
+        series = links[groups[m][0]] == "reeks"
+        cur = [inf] * total_days
+        ptr = [-1] * total_days
+        best, arg = inf, -1
+        for t in range(1, total_days):
+            if series:
+                best += REEKS_EXTRA_DAY
+            if prev[t - 1] < best:
+                best, arg = prev[t - 1], t - 1
+            cur[t] = best + node[t]
+            ptr[t] = arg
+        back.append(ptr)
+        prev = cur
+
+    t = min(range(total_days), key=lambda i: prev[i])
+    days = [t]
+    for ptr in reversed(back):
+        t = ptr[t]
+        days.append(t)
+    days.reverse()
+
+    offsets = [0] * n
+    for group, day in zip(groups, days):
+        for i in group:
+            offsets[i] = day
+    return _to_datetimes(lo, offsets)
+
+
 def moment_count(links: list[str]) -> int:
     return 1 + sum(1 for t in links[1:] if t != "moment") if links else 0
 
@@ -206,6 +313,7 @@ class CollectionAlbum:
     start_source: str = ""   # "naam" | "buren" | "handmatig" | ""
     end_source: str = ""
     links: list[str] = field(default_factory=list)  # per photo: relation to the previous one
+    seasons: list[str] = field(default_factory=list)  # per photo: season estimate
 
     @property
     def complete(self) -> bool:
@@ -215,10 +323,16 @@ class CollectionAlbum:
     def has_links(self) -> bool:
         return len(self.links) == len(self.photos) and all(self.links)
 
+    @property
+    def has_seasons(self) -> bool:
+        return len(self.seasons) == len(self.photos) and any(s in SEASON_MONTH_COST for s in self.seasons)
+
     def planned(self) -> list[tuple[Path, datetime]]:
         if not self.complete:
             return []
-        if self.has_links:
+        if self.has_links and self.has_seasons:
+            dts = place_with_seasons(self.links, self.seasons, self.start, self.end)
+        elif self.has_links:
             dts = spread_by_links(self.links, self.start, self.end)
         else:
             dts = spread_datetimes(len(self.photos), self.start, self.end)

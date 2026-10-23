@@ -21,6 +21,7 @@ except ImportError:
     pass  # HEIC support optional
 
 from . import collection as coll
+from . import events as coll_events
 from .analyzer import analyze_album_full
 from .duplicates import find_duplicates
 from .exif import read_exif_date, write_exif_date, parse_exif_date
@@ -200,24 +201,52 @@ def _load_collection(rel: str) -> list[coll.CollectionAlbum] | None:
             data = AlbumData.load(sub_rel)
             if data.start_date or data.end_date:
                 manual[sub_rel] = (data.start_date, data.end_date)
-    return coll.load_collection(folder, rel, manual)
+    albums = coll.load_collection(folder, rel, manual)
+    for album in albums:
+        links = AlbumData.load(album.rel).photo_links
+        album.links = [links.get(p.name, "") for p in album.photos]
+    return albums
 
 
-def _run_collection_job(rel: str, targets: list[coll.CollectionAlbum]) -> None:
+def _detect_events(album: coll.CollectionAlbum, data: AlbumData, client, job: dict) -> None:
+    def progress(done: int, total: int) -> None:
+        job["detail"] = f"{done} van {total} foto's bekeken"
+
+    links, labels = coll_events.detect_links(
+        album.photos, client, album.name, coll.period_label(album.start, album.end), progress=progress,
+    )
+    data.photo_links = {p.name: link for p, link in zip(album.photos, links)}
+    data.photo_labels = {p.name: label for p, label in zip(album.photos, labels) if label}
+    data.save()
+    album.links = links
+    job["moments"] += coll.moment_count(links)
+
+
+def _run_collection_job(rel: str, targets: list[coll.CollectionAlbum], steps: set[str]) -> None:
     job = _collection_jobs[rel]
     try:
+        client = openai.OpenAI() if "events" in steps else None
         for album in targets:
             job["current"] = album.name
-            written, errors = coll.apply_album(album, coll.backup_dir_for(BACKUP_ROOT, album.rel))
+            job["detail"] = ""
             data = AlbumData.load(album.rel)
-            for filename, iso in written.items():
-                data.photo_dates[filename] = iso[:10]
-                data.photo_date_source[filename] = "spreiding"
-                _reindex_synology(album.folder / filename)
-            data.save()
-            job["photos"] += len(written)
+            if "events" in steps:
+                try:
+                    _detect_events(album, data, client, job)
+                except Exception as exc:
+                    logger.exception("Gebeurtenissen herkennen mislukt voor %s", album.name)
+                    job["errors"].append(f"{album.name} – gebeurtenissen: {exc}")
+                    continue
+            if "dates" in steps and album.complete:
+                written, errors = coll.apply_album(album, coll.backup_dir_for(BACKUP_ROOT, album.rel))
+                for filename, iso in written.items():
+                    data.photo_dates[filename] = iso[:10]
+                    data.photo_date_source[filename] = "spreiding"
+                    _reindex_synology(album.folder / filename)
+                data.save()
+                job["photos"] += len(written)
+                job["errors"].extend(f"{album.name} – {e}" for e in errors)
             job["albums_done"] += 1
-            job["errors"].extend(f"{album.name} – {e}" for e in errors)
         job["status"] = "done"
     except Exception as exc:
         logger.exception("Collectie dateren mislukt")
@@ -243,6 +272,7 @@ async def collection_page(request: Request, rel: str, saved: bool = False):
             "manual_start": data.start_date[:7],
             "manual_end": data.end_date[:7],
             "has_backup": coll.backup_dir_for(BACKUP_ROOT, a.rel).is_dir(),
+            "moments": coll.moment_count(a.links) if a.has_links else 0,
         })
     ready = [r for r in rows if r["album"].complete]
     return templates.TemplateResponse(request, "collection.html", {
@@ -276,16 +306,20 @@ async def collection_save_periods(request: Request, rel: str):
 async def collection_apply(request: Request, rel: str):
     form = await request.form()
     target = form.get("album", "")
+    steps = {s for s in form.get("steps", "dates").split("+") if s in ("events", "dates")} or {"dates"}
     job = _collection_jobs.get(rel)
     if job and job["status"] == "running":
         return RedirectResponse(f"/collection/{rel}", status_code=303)
     albums = await asyncio.to_thread(_load_collection, rel) or []
-    targets = [a for a in albums if a.complete and (target == "__all__" or a.rel == target)]
+    targets = [
+        a for a in albums
+        if (target == "__all__" or a.rel == target) and (a.complete or steps == {"events"})
+    ]
     _collection_jobs[rel] = {
-        "status": "running", "current": "", "albums_total": len(targets),
-        "albums_done": 0, "photos": 0, "errors": [],
+        "status": "running", "steps": sorted(steps), "current": "", "detail": "",
+        "albums_total": len(targets), "albums_done": 0, "photos": 0, "moments": 0, "errors": [],
     }
-    threading.Thread(target=_run_collection_job, args=(rel, targets), daemon=True).start()
+    threading.Thread(target=_run_collection_job, args=(rel, targets, steps), daemon=True).start()
     return RedirectResponse(f"/collection/{rel}", status_code=303)
 
 

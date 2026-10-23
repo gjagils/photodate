@@ -88,6 +88,9 @@ class AlbumData:
     never_organize: bool = False
     # Where each written date came from: filename -> "spreiding" | "ai" | "handmatig"
     photo_date_source: dict[str, str] = field(default_factory=dict)
+    # How each photo relates to the previous one: "moment" | "reeks" | "nieuw" (AI)
+    photo_links: dict[str, str] = field(default_factory=dict)
+    photo_labels: dict[str, str] = field(default_factory=dict)  # filename -> short event label
 
     def save(self) -> None:
         STORAGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -118,4 +121,6 @@ class AlbumData:
             exif_complete=data.get("exif_complete", False),
             never_organize=data.get("never_organize", False),
             photo_date_source=data.get("photo_date_source", {}),
+            photo_links=data.get("photo_links", {}),
+            photo_labels=data.get("photo_labels", {}),
         )

@@ -135,16 +135,51 @@ def spread_datetimes(n: int, start: date, end: date) -> list[datetime]:
     if n <= 0:
         return []
     span = max((end - start).days, 0)
+    return _to_datetimes(start, [round(i * span / (n - 1)) if n > 1 else 0 for i in range(n)])
+
+
+def _to_datetimes(start: date, day_offsets: list[int]) -> list[datetime]:
     result = []
     prev_day = None
     minute = 0
-    for i in range(n):
-        offset = round(i * span / (n - 1)) if n > 1 else 0
+    for offset in day_offsets:
         day = start + timedelta(days=offset)
         minute = minute + 1 if day == prev_day else 0
         result.append(datetime(day.year, day.month, day.day, 12, 0) + timedelta(minutes=minute))
         prev_day = day
     return result
+
+
+REEKS_GAP_DAYS = 1.0
+
+
+def spread_by_links(links: list[str], start: date, end: date) -> list[datetime]:
+    """Same moment -> same day, same series -> next day, the rest of the period between new events."""
+    n = len(links)
+    if n == 0:
+        return []
+    span = max((end - start).days, 0)
+    transitions = links[1:]
+    reeks = transitions.count("reeks")
+    nieuw = sum(1 for t in transitions if t not in ("moment", "reeks"))
+    if nieuw:
+        reeks_gap = min(REEKS_GAP_DAYS, span / (reeks + nieuw))
+        nieuw_gap = (span - reeks * reeks_gap) / nieuw
+    else:
+        reeks_gap = span / reeks if reeks else 0.0
+        nieuw_gap = 0.0
+    gaps = {"moment": 0.0, "reeks": reeks_gap}
+
+    pos = 0.0
+    offsets = [0]
+    for t in transitions:
+        pos += gaps.get(t, nieuw_gap)
+        offsets.append(min(round(pos), span))
+    return _to_datetimes(start, offsets)
+
+
+def moment_count(links: list[str]) -> int:
+    return 1 + sum(1 for t in links[1:] if t != "moment") if links else 0
 
 
 def period_label(start: Optional[date], end: Optional[date]) -> str:
@@ -170,15 +205,24 @@ class CollectionAlbum:
     end: Optional[date] = None
     start_source: str = ""   # "naam" | "buren" | "handmatig" | ""
     end_source: str = ""
+    links: list[str] = field(default_factory=list)  # per photo: relation to the previous one
 
     @property
     def complete(self) -> bool:
         return self.start is not None and self.end is not None and self.start <= self.end
 
+    @property
+    def has_links(self) -> bool:
+        return len(self.links) == len(self.photos) and all(self.links)
+
     def planned(self) -> list[tuple[Path, datetime]]:
         if not self.complete:
             return []
-        return list(zip(self.photos, spread_datetimes(len(self.photos), self.start, self.end)))
+        if self.has_links:
+            dts = spread_by_links(self.links, self.start, self.end)
+        else:
+            dts = spread_datetimes(len(self.photos), self.start, self.end)
+        return list(zip(self.photos, dts))
 
 
 def parse_manual_date(value: str, is_end: bool) -> Optional[date]:

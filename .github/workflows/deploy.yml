@@ -66,24 +66,57 @@ jobs:
           PORTAINER_API_TOKEN: ${{ secrets.PORTAINER_API_TOKEN }}
           PORTAINER_STACK_ID: ${{ secrets.PORTAINER_STACK_ID }}
         run: |
-          STACK_INFO=$(curl -s -H "X-API-Key: $PORTAINER_API_TOKEN" \
-            "$PORTAINER_URL/api/stacks/$PORTAINER_STACK_ID")
-          ENDPOINT_ID=$(echo "$STACK_INFO" | jq -r '.EndpointId')
-          CURRENT_ENV=$(echo "$STACK_INFO" | jq '.Env // []')
+          set -euo pipefail
+          BASE="${PORTAINER_URL%/}"
+          api() { curl --fail-with-body -sS -H "X-API-Key: $PORTAINER_API_TOKEN" "$@"; }
 
+          STACK_INFO=$(api "$BASE/api/stacks/$PORTAINER_STACK_ID")
+          ENDPOINT_ID=$(jq -r '.EndpointId' <<<"$STACK_INFO")
           IMAGE_LOWER=$(echo "$IMAGE_NAME" | tr '[:upper:]' '[:lower:]')
-          curl -s -X POST \
-            -H "X-API-Key: $PORTAINER_API_TOKEN" \
-            "$PORTAINER_URL/api/endpoints/$ENDPOINT_ID/docker/images/create?fromImage=ghcr.io%2F${IMAGE_LOWER}&tag=latest"
 
-          STACK_FILE=$(cat docker-compose.yml)
-          curl -s -X PUT \
-            -H "X-API-Key: $PORTAINER_API_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"StackFileContent\": $(echo \"$STACK_FILE\" | jq -Rs .),
-              \"Env\": $CURRENT_ENV,
-              \"Prune\": true
-            }" \
-            "$PORTAINER_URL/api/stacks/$PORTAINER_STACK_ID?endpointId=$ENDPOINT_ID"
-          echo "Deploy complete."
+          api -X POST -o /dev/null \
+            "$BASE/api/endpoints/$ENDPOINT_ID/docker/images/create?fromImage=ghcr.io%2F${IMAGE_LOWER}&tag=latest"
+
+          # Build the body with jq so the compose file is passed verbatim (no shell quoting).
+          jq -n --rawfile compose docker-compose.yml --argjson env "$(jq '.Env // []' <<<"$STACK_INFO")" \
+            '{StackFileContent: $compose, Env: $env, Prune: true, PullImage: true}' > stack-update.json
+          api -X PUT -o /dev/null -H "Content-Type: application/json" --data @stack-update.json \
+            "$BASE/api/stacks/$PORTAINER_STACK_ID?endpointId=$ENDPOINT_ID"
+          echo "ENDPOINT_ID=$ENDPOINT_ID" >> "$GITHUB_ENV"
+          echo "Stack bijgewerkt."
+
+      - name: Check container runs the new image
+        env:
+          PORTAINER_URL: ${{ secrets.PORTAINER_URL }}
+          PORTAINER_API_TOKEN: ${{ secrets.PORTAINER_API_TOKEN }}
+          CONTAINER_NAME: photodate
+          APP_PORT: "8920"
+        run: |
+          set -euo pipefail
+          BASE="${PORTAINER_URL%/}"
+          api() { curl --fail-with-body -sS -H "X-API-Key: $PORTAINER_API_TOKEN" "$@"; }
+          IMAGE_REF=$(echo "ghcr.io/$IMAGE_NAME:latest" | tr '[:upper:]' '[:lower:]' | sed 's#/#%2F#g')
+          WANT=$(api "$BASE/api/endpoints/$ENDPOINT_ID/docker/images/$IMAGE_REF/json" | jq -r '.Id')
+
+          STATE=""
+          for i in $(seq 1 24); do
+            INFO=$(api "$BASE/api/endpoints/$ENDPOINT_ID/docker/containers/json?all=true" \
+              | jq -c --arg n "/$CONTAINER_NAME" '[.[] | select(.Names[0] == $n)][0] // {}')
+            STATE=$(jq -r '.State // "afwezig"' <<<"$INFO")
+            HAVE=$(jq -r '.ImageID // ""' <<<"$INFO")
+            echo "poging $i/24: container $STATE"
+            if [ "$STATE" = "running" ] && [ "$HAVE" = "$WANT" ]; then break; fi
+            sleep 5
+          done
+          if [ "$STATE" != "running" ]; then echo "::error::Container $CONTAINER_NAME draait niet na de deploy ($STATE)"; exit 1; fi
+          if [ "$HAVE" != "$WANT" ]; then echo "::error::Container draait niet op de nieuwe image"; exit 1; fi
+
+          HOST=$(sed -E 's#^(https?://[^:/]+).*#\1#' <<<"$BASE")
+          for i in $(seq 1 12); do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$HOST:$APP_PORT/" || true)
+            echo "app poging $i/12: HTTP $CODE"
+            if [ "$CODE" = "200" ]; then exit 0; fi
+            sleep 5
+          done
+          echo "::error::App reageert niet op $HOST:$APP_PORT"
+          exit 1

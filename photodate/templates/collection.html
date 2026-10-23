@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ rel.split('/')[-1] }}</h1>
+<p style="color:#aaa; margin-bottom:1.5rem; max-width:65ch;">
+    Elke foto krijgt een datum binnen de periode van zijn album, in de volgorde van het album.
+    Geen AI en niets invullen: de periode komt uit de mapnaam of van het album ervoor en erna.
+    In de foto komt ook "Datum geschat: …" te staan. De originelen worden bewaard.
+</p>
+
+{% if saved %}<div class="alert alert-success">Periodes opgeslagen.</div>{% endif %}
+
+{% if job %}
+<div class="card job job--{{ job.status }}">
+    {% if job.status == 'running' %}
+        <strong>Bezig met dateren…</strong>
+        {{ job.albums_done }} van {{ job.albums_total }} albums klaar
+        {% if job.current %}· nu: {{ job.current }}{% endif %}
+        · {{ job.photos }} foto's
+        <script>setTimeout(() => location.reload(), 3000);</script>
+    {% elif job.status == 'done' %}
+        <strong>Klaar.</strong> {{ job.photos }} foto's in {{ job.albums_done }} album(s) gedateerd.
+        Laat je foto-app de metadata vernieuwen (Synology Photos: herindexeren, Immich: "metadata vernieuwen").
+    {% else %}
+        <strong>Er ging iets mis.</strong>
+    {% endif %}
+    {% if job.errors %}
+        <details style="margin-top:.5rem;"><summary>{{ job.errors|length }} fout(en)</summary>
+            <ul>{% for e in job.errors[:50] %}<li>{{ e }}</li>{% endfor %}</ul>
+        </details>
+    {% endif %}
+</div>
+{% endif %}
+
+<div class="card">
+    <div class="actions" style="justify-content:space-between; align-items:center; margin-top:0;">
+        <div><strong>{{ ready_albums }}</strong> albums met volledige periode · <strong>{{ ready_photos }}</strong> foto's</div>
+        <form method="post" action="/collection/{{ rel }}/apply">
+            <input type="hidden" name="album" value="__all__">
+            <button type="submit" {% if job and job.status == 'running' %}disabled{% endif %}>Dateer alle albums</button>
+        </form>
+    </div>
+</div>
+
+<form method="post" action="/collection/{{ rel }}/periods" id="periods"></form>
+
+<div class="card" style="overflow-x:auto;">
+    <table class="coll">
+        <tr>
+            <th>Album</th>
+            <th>Periode</th>
+            <th>Aanpassen (JJJJ-MM)</th>
+            <th>Voorbeeld: eerste · midden · laatste</th>
+            <th></th>
+        </tr>
+        {% for r in rows %}{% set a = r.album %}
+        <tr>
+            <td>
+                <a href="/album/{{ a.rel }}">{{ a.name }}</a>
+                <div class="muted">{{ a.photos|length }} foto's{% if r.dated %} · <span class="success">{{ r.dated }} gedateerd</span>{% endif %}</div>
+            </td>
+            <td>
+                {% if a.complete %}{{ period_label(a.start, a.end) }}{% else %}<span class="warning">{{ period_label(a.start, a.end) }}</span>{% endif %}
+                <div class="muted">
+                    {% for src in [a.start_source, a.end_source] %}<span class="src src--{{ src or 'leeg' }}">{{ src or 'ontbreekt' }}</span>{% endfor %}
+                </div>
+            </td>
+            <td class="period-inputs">
+                <input type="hidden" name="album_{{ loop.index0 }}" value="{{ a.rel }}" form="periods">
+                <input type="text" name="start_{{ loop.index0 }}" value="{{ r.manual_start }}" form="periods"
+                       placeholder="{{ a.start.strftime('%Y-%m') if a.start else 'begin' }}" pattern="\d{4}-\d{2}(-\d{2})?">
+                <input type="text" name="end_{{ loop.index0 }}" value="{{ r.manual_end }}" form="periods"
+                       placeholder="{{ a.end.strftime('%Y-%m') if a.end else 'eind' }}" pattern="\d{4}-\d{2}(-\d{2})?">
+            </td>
+            <td>
+                {% if r.samples %}
+                <div class="samples">
+                    {% for name, dt in r.samples %}
+                    <figure>
+                        <img src="/thumb/{{ a.rel }}/__file__/{{ name }}?size=120" loading="lazy" alt="{{ name }}">
+                        <figcaption>{{ dt.strftime('%d-%m-%Y') }}</figcaption>
+                    </figure>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <span class="muted">Vul een begin en eind in.</span>
+                {% endif %}
+            </td>
+            <td class="row-actions">
+                {% if a.complete %}
+                <form method="post" action="/collection/{{ rel }}/apply">
+                    <input type="hidden" name="album" value="{{ a.rel }}">
+                    <button type="submit" class="btn-secondary small" {% if job and job.status == 'running' %}disabled{% endif %}>Dateer</button>
+                </form>
+                {% endif %}
+                {% if r.has_backup %}
+                <form method="post" action="/collection/{{ rel }}/restore">
+                    <input type="hidden" name="album" value="{{ a.rel }}">
+                    <button type="submit" class="btn-secondary small">Herstel origineel</button>
+                </form>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+    <div class="actions">
+        <button type="submit" form="periods" class="btn-secondary">Periodes opslaan</button>
+        <span class="muted" style="align-self:center;">Leeg laten = automatisch (grijze waarde).</span>
+    </div>
+</div>
+
+<style>
+.muted { color:#8a93a8; font-size:.8rem; margin-top:.2rem; }
+.coll td { vertical-align: top; }
+.period-inputs input { width: 6.5rem; margin-bottom:.3rem; display:block; }
+.samples { display:flex; gap:.5rem; }
+.samples figure { margin:0; text-align:center; }
+.samples img { width:72px; height:72px; object-fit:cover; border-radius:4px; display:block; background:#0f3460; }
+.samples figcaption { font-size:.72rem; color:#aaa; margin-top:.2rem; font-variant-numeric: tabular-nums; }
+.row-actions form { margin-bottom:.4rem; }
+button.small { padding:.35rem .8rem; font-size:.85rem; white-space:nowrap; }
+button[disabled] { opacity:.5; cursor:not-allowed; }
+.src { font-size:.68rem; text-transform:uppercase; letter-spacing:.05em; padding:.1em .45em; border-radius:3px; margin-right:.3rem; }
+.src--naam { background:#1a3a28; color:#4ecca3; }
+.src--buren { background:#1a2a3a; color:#7ab3e8; }
+.src--handmatig { background:#3a2a10; color:#f0a500; }
+.src--leeg { background:#3a1212; color:#e94560; }
+.job--running { border-left:4px solid #f0a500; }
+.job--done { border-left:4px solid #4ecca3; }
+.job--error { border-left:4px solid #e94560; }
+</style>
+{% endblock %}

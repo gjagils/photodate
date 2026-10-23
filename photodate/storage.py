@@ -86,6 +86,8 @@ class AlbumData:
     exif_complete: bool = False
     # Whether this album should never be organized (user-managed flag)
     never_organize: bool = False
+    # Where each written date came from: filename -> "spreiding" | "ai" | "handmatig"
+    photo_date_source: dict[str, str] = field(default_factory=dict)
 
     def save(self) -> None:
         STORAGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -115,4 +117,5 @@ class AlbumData:
             photo_hashes=data.get("photo_hashes", {}),
             exif_complete=data.get("exif_complete", False),
             never_organize=data.get("never_organize", False),
+            photo_date_source=data.get("photo_date_source", {}),
         )

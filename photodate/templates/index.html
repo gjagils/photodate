@@ -3,6 +3,21 @@
 <h1>Photodate</h1>
 <p style="margin-bottom: 1.5rem; color: #aaa;">Corrigeer datums van ingescande foto's met AI</p>
 
+{% if collections %}
+<div class="card">
+    <h2>Collecties</h2>
+    <p style="color:#aaa; margin-bottom:.8rem;">Dateer alle albums in één keer op basis van mapnaam en volgorde.</p>
+    <div class="folder-list">
+        {% for rel, count in collections %}
+        <a href="/collection/{{ rel }}" style="display: flex; justify-content: space-between; align-items: center;">
+            <span>{{ rel }}</span>
+            <span style="font-size: 0.8em; color: #aaa;">{{ count }} albums</span>
+        </a>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
 <div class="card">
     <h2>Fotoalbums</h2>
     <div class="folder-list">

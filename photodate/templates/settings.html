@@ -24,6 +24,10 @@
                     <label>Geboortedatum</label>
                     <input type="date" name="birthdate_{{ loop.index0 }}" value="{{ member.birthdate }}">
                 </div>
+                <div style="flex:1">
+                    <label>Overleden (optioneel)</label>
+                    <input type="date" name="died_{{ loop.index0 }}" value="{{ member.died }}">
+                </div>
                 <div style="flex:2">
                     <label>Opmerking</label>
                     <input type="text" name="notes_{{ loop.index0 }}" value="{{ member.notes }}" placeholder="bijv. draagt bril, rood haar">
@@ -73,6 +77,10 @@ function addMember() {
         <div style="flex:1">
             <label>Geboortedatum</label>
             <input type="date" name="birthdate_${memberCount}">
+        </div>
+        <div style="flex:1">
+            <label>Overleden (optioneel)</label>
+            <input type="date" name="died_${memberCount}">
         </div>
         <div style="flex:2">
             <label>Opmerking</label>

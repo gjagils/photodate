@@ -202,27 +202,44 @@ def _load_collection(rel: str) -> list[coll.CollectionAlbum] | None:
             if data.start_date or data.end_date:
                 manual[sub_rel] = (data.start_date, data.end_date)
     albums = coll.load_collection(folder, rel, manual)
+    family = _family()
     for album in albums:
         data = AlbumData.load(album.rel)
         album.links = [data.photo_links.get(p.name, "") for p in album.photos]
         album.seasons = [data.photo_seasons.get(p.name, "onbekend") for p in album.photos]
+        album.holidays = [data.photo_holidays.get(p.name, "geen") for p in album.photos]
+        album.ages = [data.photo_ages.get(p.name) for p in album.photos]
+        album.family = family
     return albums
+
+
+def _family() -> list[coll.Person]:
+    people = []
+    for m in GlobalSettings.load().family_members:
+        born = coll.parse_manual_date(m.birthdate, is_end=False)
+        if born:
+            people.append(coll.Person(m.name, born, coll.parse_manual_date(m.died, is_end=False)))
+    return people
 
 
 def _detect_events(album: coll.CollectionAlbum, data: AlbumData, client, job: dict) -> None:
     def progress(done: int, total: int) -> None:
         job["detail"] = f"{done} van {total} foto's bekeken"
 
-    links, labels, seasons = coll_events.detect_links(
+    result = coll_events.detect_links(
         album.photos, client, album.name, coll.period_label(album.start, album.end), progress=progress,
     )
-    data.photo_links = {p.name: link for p, link in zip(album.photos, links)}
-    data.photo_labels = {p.name: label for p, label in zip(album.photos, labels) if label}
-    data.photo_seasons = {p.name: season for p, season in zip(album.photos, seasons)}
+    data.photo_links = {p.name: link for p, link in zip(album.photos, result.links)}
+    data.photo_labels = {p.name: label for p, label in zip(album.photos, result.labels) if label}
+    data.photo_seasons = {p.name: season for p, season in zip(album.photos, result.seasons)}
+    data.photo_holidays = {p.name: h for p, h in zip(album.photos, result.holidays) if h != "geen"}
+    data.photo_ages = {p.name: a for p, a in zip(album.photos, result.ages) if a}
     data.save()
-    album.links = links
-    album.seasons = seasons
-    job["moments"] += coll.moment_count(links)
+    album.links = result.links
+    album.seasons = result.seasons
+    album.holidays = result.holidays
+    album.ages = result.ages
+    job["moments"] += coll.moment_count(result.links)
 
 
 def _run_collection_job(rel: str, targets: list[coll.CollectionAlbum], steps: set[str]) -> None:
@@ -277,6 +294,7 @@ async def collection_page(request: Request, rel: str, saved: bool = False):
             "has_backup": coll.backup_dir_for(BACKUP_ROOT, a.rel).is_dir(),
             "moments": coll.moment_count(a.links) if a.has_links else 0,
             "seasoned": sum(1 for s in a.seasons if s in coll.SEASON_MONTH_COST),
+            "holidays": sorted({coll.HOLIDAY_LABELS[h] for h in a.holidays if h in coll.HOLIDAY_LABELS}),
         })
     ready = [r for r in rows if r["album"].complete]
     return templates.TemplateResponse(request, "collection.html", {
@@ -1112,8 +1130,9 @@ async def settings_save(request: Request):
         name = form.get(f"name_{i}", "").strip()
         birthdate = form.get(f"birthdate_{i}", "").strip()
         notes = form.get(f"notes_{i}", "").strip()
+        died = form.get(f"died_{i}", "").strip()
         if name:
-            members.append(FamilyMember(name=name, birthdate=birthdate, notes=notes))
+            members.append(FamilyMember(name=name, birthdate=birthdate, notes=notes, died=died))
         i += 1
 
     settings = GlobalSettings(

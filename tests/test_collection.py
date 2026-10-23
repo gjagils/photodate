@@ -210,3 +210,64 @@ def test_planned_prefers_seasons_when_present(tmp_path):
     album.seasons = ["zomer", "onbekend", "onbekend"]
     first = album.planned()[0][1]
     assert first.date() < date(1988, 10, 1)
+
+
+GILS = [
+    coll.Person("Gerard", date(1945, 11, 7), date(1999, 4, 6)),
+    coll.Person("Johanna", date(1951, 8, 13)),
+    coll.Person("Caroline", date(1974, 9, 21)),
+    coll.Person("Marijke", date(1976, 5, 10)),
+    coll.Person("Gerd-Jan", date(1980, 1, 25)),
+]
+
+
+def test_easter_sunday():
+    assert coll.easter_sunday(1989) == date(1989, 3, 26)
+    assert coll.easter_sunday(2000) == date(2000, 4, 23)
+
+
+def test_holiday_windows():
+    first, last = date(1988, 6, 1), date(1990, 3, 31)
+    assert (date(1988, 11, 15), date(1988, 12, 6)) in coll.holiday_windows("sinterklaas", first, last)
+    assert coll.holiday_windows("koninginnedag", first, last) == [(date(1989, 4, 30), date(1989, 4, 30))]
+    nine = coll.holiday_windows("verjaardag", first, last, GILS, age=9)
+    assert nine == [(date(1989, 1, 22), date(1989, 2, 1))]  # only Gerd-Jan turns 9 in this period
+    any_birthday = coll.holiday_windows("verjaardag", first, last, GILS)
+    assert len(any_birthday) >= 9
+
+
+def test_no_birthdays_after_death():
+    windows = coll.holiday_windows("verjaardag", date(1999, 6, 1), date(2000, 9, 30), GILS[:1])
+    assert windows == []
+
+
+def test_sinterklaas_moment_lands_in_its_window():
+    links = ["nieuw"] * 40
+    holidays = ["geen"] * 40
+    holidays[5] = "sinterklaas"  # evenly this would be around January 1989
+    dts = coll.place_with_seasons(links, ["onbekend"] * 40, date(1988, 10, 1), date(1990, 1, 31),
+                                  holidays=holidays)
+    assert date(1988, 11, 15) <= dts[5].date() <= date(1988, 12, 6)
+    assert all(a < b for a, b in zip(dts, dts[1:]))
+
+
+def test_birthday_with_visible_age_uses_family():
+    links = ["nieuw"] * 40
+    holidays = ["geen"] * 40
+    ages = [None] * 40
+    holidays[20], ages[20] = "verjaardag", 9
+    dts = coll.place_with_seasons(links, ["onbekend"] * 40, date(1988, 10, 1), date(1990, 1, 31),
+                                  holidays=holidays, ages=ages, family=GILS)
+    assert date(1989, 1, 22) <= dts[20].date() <= date(1989, 2, 1)
+
+
+def test_description_mentions_holiday(tmp_path):
+    _make_album(tmp_path / "Gils", "IX - Okt '88 tot Jan '90", 3)
+    album = coll.load_collection(tmp_path / "Gils", "Gils")[0]
+    album.links = ["nieuw", "moment", "nieuw"]
+    album.holidays = ["sinterklaas", "sinterklaas", "geen"]
+    album.seasons = ["onbekend"] * 3
+    coll.apply_album(album, tmp_path / "backups")
+    desc = piexif.load(str(album.photos[0]))["0th"][piexif.ImageIFD.ImageDescription]
+    assert b", Sinterklaas (album IX" in desc
+    assert piexif.load(str(album.photos[0]))["Exif"][piexif.ExifIFD.DateTimeOriginal][:7] in (b"1988:11", b"1988:12")

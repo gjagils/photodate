@@ -21,6 +21,7 @@ class FamilyMember:
     name: str
     birthdate: str  # YYYY-MM-DD
     notes: str = ""  # e.g. "draagt bril", "rood haar"
+    died: str = ""  # YYYY-MM-DD, optional
 
 
 @dataclass
@@ -101,6 +102,8 @@ class AlbumData:
     photo_links: dict[str, str] = field(default_factory=dict)
     photo_labels: dict[str, str] = field(default_factory=dict)  # filename -> short event label
     photo_seasons: dict[str, str] = field(default_factory=dict)  # filename -> lente|zomer|herfst|winter|onbekend
+    photo_holidays: dict[str, str] = field(default_factory=dict)  # filename -> sinterklaas|kerst|...|geen
+    photo_ages: dict[str, int] = field(default_factory=dict)  # filename -> visible birthday age
 
     def save(self) -> None:
         STORAGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -134,4 +137,6 @@ class AlbumData:
             photo_links=data.get("photo_links", {}),
             photo_labels=data.get("photo_labels", {}),
             photo_seasons=data.get("photo_seasons", {}),
+            photo_holidays=data.get("photo_holidays", {}),
+            photo_ages=data.get("photo_ages", {}),
         )

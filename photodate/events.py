@@ -13,7 +13,10 @@ logger = logging.getLogger(__name__)
 
 RELATIONS = ("moment", "reeks", "nieuw")
 SEASONS = ("lente", "zomer", "herfst", "winter", "onbekend")
-HOLIDAYS = ("sinterklaas", "kerst", "oudjaar", "pasen", "koninginnedag", "verjaardag", "geen")
+HOLIDAYS = (
+    "sinterklaas", "kerst", "oudjaar", "driekoningen", "carnaval", "pasen", "koninginnedag",
+    "sintmaarten", "verjaardag", "geen",
+)
 EVENTS_MODEL = os.environ.get("OPENAI_EVENTS_MODEL", "gpt-4o")
 BATCH_SIZE = 12
 THUMB_SIZE = 512
@@ -38,11 +41,16 @@ Schat per foto het seizoen (Nederland), alleen op duidelijke aanwijzingen:
 - "onbekend": binnenopnames of te weinig aanwijzingen. Gebruik dit liever dan te gokken.
 
 Geef per foto of het om een Nederlandse feestdag gaat, alleen bij duidelijke aanwijzingen:
-- "sinterklaas": Sinterklaas of Pieten, surprises, gedichten, schoen zetten, pakjesavond, intocht
+- "sinterklaas": Sinterklaas (mijter, staf, rode mantel) of Pieten, surprises, gedichten, \
+schoen zetten, pakjesavond, intocht
 - "kerst": kerstboom met cadeaus, kerstdiner, kerststal
 - "oudjaar": vuurwerk, oliebollen, proosten om middernacht
+- "driekoningen": sterrenzingers met kroon en ster
+- "carnaval": verkleed (pakken, schmink, boerenkiel, steek), optocht, praalwagens, \
+blaaskapel of drumband, kroeg met confetti. Let op: verkleed is niet hetzelfde als Sinterklaas.
 - "pasen": paaseieren, paashaas, eieren zoeken
 - "koninginnedag": oranje kleding of versiering, vrijmarkt, vlaggen, kinderspelen op straat
+- "sintmaarten": kinderen met lampionnen in het donker
 - "verjaardag": taart met kaarsjes, cadeaus uitpakken, slingers, ballonnen, kring met visite
 - "geen": anders
 
@@ -52,8 +60,8 @@ een cijfer op taart, ballon, slinger of kaart; Abraham of Sarah is 50). Anders n
 Antwoord alleen met JSON in deze vorm:
 {{"overgangen": [{m} waarden uit "moment", "reeks", "nieuw"], "labels": [{n} korte labels], \
 "seizoenen": [{n} waarden uit "lente", "zomer", "herfst", "winter", "onbekend"], \
-"feestdagen": [{n} waarden uit "sinterklaas", "kerst", "oudjaar", "pasen", "koninginnedag", \
-"verjaardag", "geen"], "leeftijden": [{n} getallen of null]}}
+"feestdagen": [{n} waarden uit "sinterklaas", "kerst", "oudjaar", "driekoningen", "carnaval", \
+"pasen", "koninginnedag", "sintmaarten", "verjaardag", "geen"], "leeftijden": [{n} getallen of null]}}
 """
 
 

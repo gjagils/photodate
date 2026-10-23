@@ -217,10 +217,14 @@ def _moment_season(seasons: list[str], group: list[int]) -> tuple[str, int]:
 
 HOLIDAY_LABELS = {
     "sinterklaas": "Sinterklaas", "kerst": "kerst", "oudjaar": "oud en nieuw",
-    "pasen": "Pasen", "koninginnedag": "Koninginnedag", "verjaardag": "verjaardag",
+    "driekoningen": "Driekoningen", "carnaval": "carnaval", "pasen": "Pasen",
+    "koninginnedag": "Koninginnedag", "sintmaarten": "Sint-Maarten", "verjaardag": "verjaardag",
 }
 HOLIDAY_PER_DAY = 0.5
-HOLIDAY_MAX = 40.0
+# Low cap on purpose: a misrecognised holiday whose date the album order can't reach then
+# costs the same everywhere, instead of dragging a whole run of moments along.
+HOLIDAY_MAX = 10.0
+HOLIDAY_MAX_WITH_AGE = 20.0  # a visible age matching a family birthday is stronger evidence
 
 
 @dataclass
@@ -257,6 +261,13 @@ def holiday_windows(
             windows.append((date(y, 12, 24), date(y, 12, 26)))
         elif kind == "oudjaar":
             windows.append((date(y, 12, 31), date(y + 1, 1, 1)))
+        elif kind == "driekoningen":
+            windows.append((date(y, 1, 5), date(y, 1, 7)))
+        elif kind == "carnaval":
+            ash_wednesday = easter_sunday(y) - timedelta(days=46)
+            windows.append((ash_wednesday - timedelta(days=4), ash_wednesday - timedelta(days=1)))
+        elif kind == "sintmaarten":
+            windows.append((date(y, 11, 10), date(y, 11, 12)))
         elif kind == "pasen":
             e = easter_sunday(y)
             windows.append((e - timedelta(days=1), e + timedelta(days=1)))
@@ -329,6 +340,7 @@ def place_with_seasons(
             ((a - lo).days, (b - lo).days)
             for a, b in holiday_windows(kind, lo, hi, family, age)
         ] if kind != "geen" else []
+        cap = HOLIDAY_MAX_WITH_AGE if age else HOLIDAY_MAX
         costs = []
         for t in range(total_days):
             outside = max(0, start_t - t) + max(0, t - end_t)
@@ -337,7 +349,7 @@ def place_with_seasons(
                 c += weight * table.get(months[t], default)
             if windows:
                 gap = min(max(a - t, 0, t - b) for a, b in windows)
-                c += min(HOLIDAY_MAX, HOLIDAY_PER_DAY * gap)
+                c += min(cap, HOLIDAY_PER_DAY * gap)
             costs.append(c)
         return costs
 

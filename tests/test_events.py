@@ -51,7 +51,7 @@ def test_batches_overlap_so_every_transition_is_judged(tmp_path):
 def test_unknown_values_fall_back(tmp_path):
     raw = json.dumps({
         "overgangen": ["moment", "zelfde dag?"], "labels": [], "seizoenen": ["hittegolf"],
-        "feestdagen": ["carnaval", "sinterklaas"], "leeftijden": ["negen", 250, "50"],
+        "feestdagen": ["halloween", "sinterklaas"], "leeftijden": ["negen", 250, "50"],
     })
     result = events.detect_links(_photos(tmp_path, 5), FakeClient(raw=raw), "IX", "?")
     assert result.links == ["nieuw", "moment", "nieuw", "nieuw", "nieuw"]

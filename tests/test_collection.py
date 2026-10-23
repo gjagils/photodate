@@ -255,10 +255,10 @@ def test_birthday_with_visible_age_uses_family():
     links = ["nieuw"] * 40
     holidays = ["geen"] * 40
     ages = [None] * 40
-    holidays[20], ages[20] = "verjaardag", 9
+    holidays[12], ages[12] = "verjaardag", 9  # evenly around the end of February 1989
     dts = coll.place_with_seasons(links, ["onbekend"] * 40, date(1988, 10, 1), date(1990, 1, 31),
                                   holidays=holidays, ages=ages, family=GILS)
-    assert date(1989, 1, 22) <= dts[20].date() <= date(1989, 2, 1)
+    assert date(1989, 1, 22) <= dts[12].date() <= date(1989, 2, 1)
 
 
 def test_description_mentions_holiday(tmp_path):
@@ -271,3 +271,25 @@ def test_description_mentions_holiday(tmp_path):
     desc = piexif.load(str(album.photos[0]))["0th"][piexif.ImageIFD.ImageDescription]
     assert b", Sinterklaas (album IX" in desc
     assert piexif.load(str(album.photos[0]))["Exif"][piexif.ExifIFD.DateTimeOriginal][:7] in (b"1988:11", b"1988:12")
+
+
+def test_carnaval_driekoningen_sintmaarten_windows():
+    first, last = date(1988, 10, 1), date(1990, 1, 31)
+    assert (date(1989, 2, 4), date(1989, 2, 7)) in coll.holiday_windows("carnaval", first, last)
+    assert (date(1989, 1, 5), date(1989, 1, 7)) in coll.holiday_windows("driekoningen", first, last)
+    assert (date(1988, 11, 10), date(1988, 11, 12)) in coll.holiday_windows("sintmaarten", first, last)
+
+
+def test_misrecognised_holiday_does_not_drag_a_run_of_moments():
+    # Album IX: Sinterklaas, kerst (2 moments), Driekoningen, then carnaval, of which one moment
+    # was wrongly called Sinterklaas. Kerst must stay on 24-26 December.
+    labels = (["geen"] * 6 + ["sinterklaas"] + ["geen"] * 2 + ["kerst", "kerst", "driekoningen"]
+              + ["carnaval"] * 3 + ["sinterklaas"] + ["carnaval"] * 2 + ["geen"] * 22)
+    links = ["nieuw"] * len(labels)
+    dts = coll.place_with_seasons(links, ["onbekend"] * len(labels), date(1988, 10, 1),
+                                  date(1990, 1, 31), holidays=labels)
+    days = [d.date() for d in dts]
+    assert date(1988, 11, 15) <= days[6] <= date(1988, 12, 6)
+    assert date(1988, 12, 24) <= days[9] < days[10] <= date(1988, 12, 26)
+    assert date(1989, 1, 5) <= days[11] <= date(1989, 1, 7)
+    assert all(date(1989, 1, 20) <= d <= date(1989, 2, 20) for d in days[12:18])

@@ -86,9 +86,17 @@ def test_save_period_and_apply_single_album(client):
 
 def test_detect_events_then_date_same_moment_same_day(client, monkeypatch):
     c, photos = client
+    import json
+    from types import SimpleNamespace
     from photodate import web
-    from tests.test_events import FakeClient
-    monkeypatch.setattr(web.openai, "OpenAI", lambda: FakeClient("moment"))
+
+    def create(model, messages, **kwargs):
+        n = sum(1 for part in messages[0]["content"] if part["type"] == "image_url")
+        body = json.dumps({"overgangen": ["moment"] * (n - 1), "labels": ["Feest"] * n})
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=body))])
+
+    fake = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    monkeypatch.setattr(web.openai, "OpenAI", lambda: fake)
 
     album = "Gils/IX - Okt '88 tot Jan '90"
     c.post("/collection/Gils/apply", data={"album": album, "steps": "events"})

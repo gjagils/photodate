@@ -314,6 +314,16 @@ class CollectionAlbum:
     end_source: str = ""
     links: list[str] = field(default_factory=list)  # per photo: relation to the previous one
     seasons: list[str] = field(default_factory=list)  # per photo: season estimate
+    rotations: list[Optional[int]] = field(default_factory=list)  # per photo: degrees vs raw pixels
+
+    def rotation_by_name(self) -> dict[str, int]:
+        if len(self.rotations) != len(self.photos):
+            return {}
+        return {p.name: r for p, r in zip(self.photos, self.rotations) if r is not None}
+
+    @property
+    def turn_count(self) -> int:
+        return sum(1 for r in self.rotation_by_name().values() if r)
 
     @property
     def complete(self) -> bool:
@@ -413,14 +423,36 @@ def _minimal_exif(exif: dict) -> dict:
     }
 
 
-def write_estimated_date(path: Path, dt: datetime, description: str, backup_dir: Path) -> None:
-    """Write the estimated date + description into EXIF (no re-encode); keep the first original."""
+# Degrees clockwise to show the raw pixels upright <-> EXIF Orientation (rotations only).
+ROTATION_TO_ORIENTATION = {0: 1, 90: 6, 180: 3, 270: 8}
+ORIENTATION_TO_ROTATION = {v: k for k, v in ROTATION_TO_ORIENTATION.items()}
+
+
+def read_orientation(path: Path) -> int:
+    try:
+        return int(piexif.load(str(path))["0th"].get(piexif.ImageIFD.Orientation, 1))
+    except Exception:
+        return 1
+
+
+def absolute_rotation(path: Path, extra: int) -> Optional[int]:
+    """Rotation relative to the raw pixels, given an extra turn seen on the displayed image.
+
+    Storing it this way keeps writing idempotent. Mirrored orientations are left alone (None).
+    """
+    current = ORIENTATION_TO_ROTATION.get(read_orientation(path))
+    if current is None or extra not in ROTATION_TO_ORIENTATION:
+        return None
+    return (current + extra) % 360
+
+
+def _rewrite_exif(path: Path, mutate, backup_dir: Path, mtime: Optional[float]) -> None:
+    """Change EXIF in place without re-encoding the image; keep the first original as backup."""
     backup_dir.mkdir(parents=True, exist_ok=True)
     backup = backup_dir / path.name
     if not backup.exists():
         shutil.copy2(path, backup)
 
-    stamp = dt.strftime("%Y:%m:%d %H:%M:%S").encode()
     try:
         exif = piexif.load(str(path))
     except Exception:
@@ -428,18 +460,15 @@ def write_estimated_date(path: Path, dt: datetime, description: str, backup_dir:
     exif.pop("thumbnail", None)
     exif["1st"] = {}
 
-    def apply(e: dict) -> bytes:
-        e["Exif"][piexif.ExifIFD.DateTimeOriginal] = stamp
-        e["Exif"][piexif.ExifIFD.DateTimeDigitized] = stamp
-        e["0th"][piexif.ImageIFD.DateTime] = stamp
-        e["0th"][piexif.ImageIFD.ImageDescription] = description.encode("ascii", "replace")
+    def dump(e: dict) -> bytes:
+        mutate(e)
         return piexif.dump(e)
 
     try:
-        exif_bytes = apply(exif)
+        exif_bytes = dump(exif)
     except Exception:
         # Phone EXIF sometimes holds tags piexif can't re-serialise; keep only what matters.
-        exif_bytes = apply(_minimal_exif(exif))
+        exif_bytes = dump(_minimal_exif(exif))
     out = io.BytesIO()
     piexif.insert(exif_bytes, path.read_bytes(), out)
     # On SMB/NFS the server stamps mtime when buffered writes land; flush before setting it.
@@ -449,27 +478,80 @@ def write_estimated_date(path: Path, dt: datetime, description: str, backup_dir:
         fh.flush()
         os.fsync(fh.fileno())
 
+    if mtime is not None:
+        try:
+            os.utime(path, (mtime, mtime))
+        except (OSError, OverflowError) as exc:
+            logger.info("Kon bestandsdatum niet zetten voor %s: %s", path.name, exc)
+
+
+def write_estimated_date(
+    path: Path, dt: datetime, description: str, backup_dir: Path, rotation: Optional[int] = None,
+) -> None:
+    """Write the estimated date + description (and optionally the orientation) into EXIF."""
+    stamp = dt.strftime("%Y:%m:%d %H:%M:%S").encode()
+
+    def mutate(e: dict) -> None:
+        e["Exif"][piexif.ExifIFD.DateTimeOriginal] = stamp
+        e["Exif"][piexif.ExifIFD.DateTimeDigitized] = stamp
+        e["0th"][piexif.ImageIFD.DateTime] = stamp
+        e["0th"][piexif.ImageIFD.ImageDescription] = description.encode("ascii", "replace")
+        if rotation in ROTATION_TO_ORIENTATION:
+            e["0th"][piexif.ImageIFD.Orientation] = ROTATION_TO_ORIENTATION[rotation]
+
     try:
-        ts = time.mktime(dt.timetuple())
-        os.utime(path, (ts, ts))
-    except (OSError, OverflowError) as exc:
-        logger.info("Kon bestandsdatum niet zetten voor %s: %s", path.name, exc)
+        mtime: Optional[float] = time.mktime(dt.timetuple())
+    except (OverflowError, ValueError):
+        mtime = None
+    _rewrite_exif(path, mutate, backup_dir, mtime)
+
+
+def write_orientation(path: Path, rotation: int, backup_dir: Path) -> bool:
+    """Set only the EXIF orientation; returns False when nothing needed to change."""
+    orientation = ROTATION_TO_ORIENTATION[rotation]
+    if read_orientation(path) == orientation:
+        return False
+
+    def mutate(e: dict) -> None:
+        e["0th"][piexif.ImageIFD.Orientation] = orientation
+
+    _rewrite_exif(path, mutate, backup_dir, path.stat().st_mtime)
+    return True
 
 
 def apply_album(album: CollectionAlbum, backup_dir: Path) -> tuple[dict[str, str], list[str]]:
-    """Write spread dates for one album. Returns ({filename: iso datetime}, errors)."""
+    """Write planned dates (and known orientations) for one album. Returns ({filename: iso}, errors)."""
     written: dict[str, str] = {}
     errors: list[str] = []
+    rotations = album.rotation_by_name()
     for path, dt in album.planned():
         try:
             write_estimated_date(
-                path, dt, describe_estimate(dt, album.name, album.start, album.end), backup_dir
+                path, dt, describe_estimate(dt, album.name, album.start, album.end), backup_dir,
+                rotation=rotations.get(path.name),
             )
             written[path.name] = dt.isoformat(timespec="minutes")
         except Exception as exc:
             logger.warning("Kon %s niet dateren: %s", path, exc)
             errors.append(f"{path.name}: {exc}")
     return written, errors
+
+
+def apply_rotations(album: CollectionAlbum, backup_dir: Path) -> tuple[int, list[str]]:
+    """Write only the orientations. Returns (number of photos turned, errors)."""
+    turned = 0
+    errors: list[str] = []
+    rotations = album.rotation_by_name()
+    for path in album.photos:
+        rotation = rotations.get(path.name)
+        if rotation is None:
+            continue
+        try:
+            turned += write_orientation(path, rotation, backup_dir)
+        except Exception as exc:
+            logger.warning("Kon %s niet rechtzetten: %s", path, exc)
+            errors.append(f"{path.name}: {exc}")
+    return turned, errors
 
 
 def backup_dir_for(backup_root: Path, album_rel: str) -> Path:

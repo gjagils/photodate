@@ -113,3 +113,26 @@ def test_detect_events_then_date_same_moment_same_day(client, monkeypatch):
         for i in range(1, 4)
     }
     assert stamps == {b"1988:10:01"}
+
+
+def test_album_save_is_atomic(tmp_path, monkeypatch):
+    import threading
+    import photodate.storage as storage
+    monkeypatch.setattr(storage, "STORAGE_DIR", tmp_path)
+    data = storage.AlbumData(album_rel="Gils/IX", photo_dates={f"f{i}.jpg": "1989-01-01" for i in range(2000)})
+    data.save()
+    stop = threading.Event()
+
+    def writer():
+        while not stop.is_set():
+            data.save()
+
+    t = threading.Thread(target=writer)
+    t.start()
+    try:
+        for _ in range(200):
+            assert len(storage.AlbumData.load("Gils/IX").photo_dates) == 2000
+    finally:
+        stop.set()
+        t.join()
+    assert not list(tmp_path.glob(".*.tmp"))

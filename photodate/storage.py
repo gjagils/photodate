@@ -1,10 +1,19 @@
 """JSON-based storage for global settings and per-album data."""
 import json
+import os
+import threading
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
 
 STORAGE_DIR = Path("/data")  # Mounted volume in Docker
+
+
+def _write_json(path: Path, data: dict) -> None:
+    """Write via a temp file + rename so readers never see a half-written file."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    os.replace(tmp, path)
 
 
 @dataclass
@@ -30,7 +39,7 @@ class GlobalSettings:
     def save(self) -> None:
         STORAGE_DIR.mkdir(parents=True, exist_ok=True)
         path = STORAGE_DIR / "settings.json"
-        path.write_text(json.dumps(asdict(self), indent=2, ensure_ascii=False))
+        _write_json(path, asdict(self))
 
     @classmethod
     def load(cls) -> "GlobalSettings":
@@ -53,7 +62,7 @@ class ICloudData:
     def save(self) -> None:
         STORAGE_DIR.mkdir(parents=True, exist_ok=True)
         path = STORAGE_DIR / "icloud_data.json"
-        path.write_text(json.dumps(asdict(self), indent=2, ensure_ascii=False))
+        _write_json(path, asdict(self))
 
     @classmethod
     def load(cls) -> "ICloudData":
@@ -98,7 +107,7 @@ class AlbumData:
         # Use album_rel as filename, replace / with __
         safe_name = self.album_rel.replace("/", "__").replace("\\", "__")
         path = STORAGE_DIR / f"album_{safe_name}.json"
-        path.write_text(json.dumps(asdict(self), indent=2, ensure_ascii=False))
+        _write_json(path, asdict(self))
 
     @classmethod
     def load(cls, album_rel: str) -> "AlbumData":

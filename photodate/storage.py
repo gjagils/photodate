@@ -68,6 +68,7 @@ class AlbumData:
     photo_confidence: dict[str, str] = field(default_factory=dict)  # filename -> level
     photo_groups: dict[str, int] = field(default_factory=dict)      # filename -> group_id
     photo_group_labels: dict[str, str] = field(default_factory=dict) # str(group_id) -> label
+    photo_date_source: dict[str, str] = field(default_factory=dict)  # filename -> "spreiding" | "ai" | "handmatig"
     not_mine_photos: list[str] = field(default_factory=list)
     # Persisted face detection results (so results page works after page reload)
     face_clusters: list[dict] = field(default_factory=list)
@@ -104,6 +105,7 @@ class AlbumData:
             photo_confidence=data.get("photo_confidence", {}),
             photo_groups=data.get("photo_groups", {}),
             photo_group_labels=data.get("photo_group_labels", {}),
+            photo_date_source=data.get("photo_date_source", {}),
             not_mine_photos=data.get("not_mine_photos", []),
             face_clusters=data.get("face_clusters", []),
             faces_per_photo=data.get("faces_per_photo", {}),

@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.templating import Jinja2Templates
 from PIL import Image
 
+from . import collection as coll
 from .analyzer import analyze_album_full
 from .exif import read_exif_date, write_exif_date
 from .faces import detect_faces_in_album
@@ -41,12 +42,14 @@ except ImportError:
 SKIP_DIRS = {"@eaDir", "#recycle", ".git"}
 
 THUMB_CACHE_DIR = STORAGE_DIR / ".thumbcache"
+BACKUP_ROOT = STORAGE_DIR / "backups"
 
 app = FastAPI(title="Photodate")
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
 # In-memory analysis job state (resets on restart; persisted status in AlbumData)
 _analysis_jobs: dict[str, dict] = {}
+_collection_jobs: dict[str, dict] = {}
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -246,7 +249,7 @@ async def album_analyze(request: Request, album_rel: str):
     asyncio.create_task(_run_analysis_task(album_rel, skip_faces=False))
 
     photos = _load_photos(folder)
-    return templates.TemplateResponse("progress.html", {
+    return templates.TemplateResponse(request, "progress.html", {
         "request": request,
         "album_rel": album_rel,
         "folder_name": folder.name,
@@ -278,7 +281,7 @@ async def album_reanalyze(request: Request, album_rel: str):
     asyncio.create_task(_run_analysis_task(album_rel, skip_faces=True))
 
     photos = _load_photos(folder)
-    return templates.TemplateResponse("progress.html", {
+    return templates.TemplateResponse(request, "progress.html", {
         "request": request,
         "album_rel": album_rel,
         "folder_name": folder.name,
@@ -293,7 +296,7 @@ async def album_progress_page(request: Request, album_rel: str):
     if not folder:
         return HTMLResponse("Map niet gevonden", status_code=404)
     photos = _load_photos(folder)
-    return templates.TemplateResponse("progress.html", {
+    return templates.TemplateResponse(request, "progress.html", {
         "request": request,
         "album_rel": album_rel,
         "folder_name": folder.name,
@@ -333,7 +336,7 @@ async def album_results_page(request: Request, album_rel: str):
     photos = _load_photos(folder)
     # Convert string keys back to int for template iteration by photo.index
     faces_per_photo = {int(k): v for k, v in album_data.faces_per_photo.items()}
-    return templates.TemplateResponse("results.html", {
+    return templates.TemplateResponse(request, "results.html", {
         "request": request,
         "album_rel": album_rel,
         "photos": photos,
@@ -345,15 +348,148 @@ async def album_results_page(request: Request, album_rel: str):
 
 # ── Page: Home ────────────────────────────────────────────────────────────────
 
+def _collections(folders: list[tuple[Path, str, str]]) -> list[tuple[str, int]]:
+    """Parent folders holding two or more albums."""
+    counts: dict[str, int] = {}
+    for _, rel, _ in folders:
+        parent = str(Path(rel).parent)
+        if parent != ".":
+            counts[parent] = counts.get(parent, 0) + 1
+    return sorted((p, n) for p, n in counts.items() if n >= 2)
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     folders = _get_all_albums()
     roots = _get_photos_roots()
-    return templates.TemplateResponse("index.html", {
+    return templates.TemplateResponse(request, "index.html", {
         "request": request,
         "folders": folders,
+        "collections": _collections(folders),
         "photos_roots": roots,
     })
+
+
+# ── Page: Collection (date many albums at once, no AI) ────────────────────────
+
+def _load_collection(rel: str) -> list[coll.CollectionAlbum] | None:
+    folder = _find_album(rel)
+    if not folder:
+        return None
+    manual = {}
+    for sub in folder.iterdir():
+        if sub.is_dir():
+            sub_rel = f"{rel}/{sub.name}"
+            data = AlbumData.load(sub_rel)
+            if data.start_date or data.end_date:
+                manual[sub_rel] = (data.start_date, data.end_date)
+    return coll.load_collection(folder, rel, manual)
+
+
+def _run_collection_job(rel: str, targets: list[coll.CollectionAlbum]) -> None:
+    job = _collection_jobs[rel]
+    try:
+        for album in targets:
+            job["current"] = album.name
+            written, errors = coll.apply_album(album, coll.backup_dir_for(BACKUP_ROOT, album.rel))
+            data = AlbumData.load(album.rel)
+            for filename, iso in written.items():
+                data.photo_dates[filename] = iso[:10]
+                data.photo_date_source[filename] = "spreiding"
+            data.applied_count = len(written)
+            data.save()
+            job["photos"] += len(written)
+            job["albums_done"] += 1
+            job["errors"].extend(f"{album.name} – {e}" for e in errors)
+        job["status"] = "done"
+    except Exception as exc:
+        logger.error("Collectie dateren mislukt: %s", traceback.format_exc())
+        job["status"] = "error"
+        job["errors"].append(str(exc))
+    job["current"] = ""
+
+
+@app.get("/collection/{rel:path}", response_class=HTMLResponse)
+async def collection_page(request: Request, rel: str, saved: bool = False):
+    albums = await asyncio.to_thread(_load_collection, rel)
+    if albums is None:
+        return HTMLResponse("Map niet gevonden", status_code=404)
+    rows = []
+    for a in albums:
+        plan = a.planned()
+        samples = [plan[0], plan[len(plan) // 2], plan[-1]] if plan else []
+        data = AlbumData.load(a.rel)
+        manual_start, manual_end = data.start_date[:7], data.end_date[:7]
+        rows.append({
+            "album": a,
+            "samples": [(p.name, dt) for p, dt in samples],
+            "dated": sum(1 for s in data.photo_date_source.values() if s == "spreiding"),
+            "manual_start": manual_start,
+            "manual_end": manual_end,
+            "has_backup": coll.backup_dir_for(BACKUP_ROOT, a.rel).is_dir(),
+        })
+    ready = [r for r in rows if r["album"].complete]
+    return templates.TemplateResponse(request, "collection.html", {
+        "request": request,
+        "rel": rel,
+        "rows": rows,
+        "ready_albums": len(ready),
+        "ready_photos": sum(len(r["album"].photos) for r in ready),
+        "job": _collection_jobs.get(rel),
+        "saved": saved,
+        "period_label": coll.period_label,
+    })
+
+
+@app.post("/collection/{rel:path}/periods")
+async def collection_save_periods(request: Request, rel: str):
+    form = await request.form()
+    i = 0
+    while f"album_{i}" in form:
+        album_rel = form[f"album_{i}"]
+        start = coll.parse_manual_date(form.get(f"start_{i}", ""), is_end=False)
+        end = coll.parse_manual_date(form.get(f"end_{i}", ""), is_end=True)
+        data = AlbumData.load(album_rel)
+        data.start_date = start.isoformat() if start else ""
+        data.end_date = end.isoformat() if end else ""
+        data.save()
+        i += 1
+    return RedirectResponse(f"/collection/{rel}?saved=1", status_code=303)
+
+
+@app.post("/collection/{rel:path}/apply")
+async def collection_apply(request: Request, rel: str):
+    form = await request.form()
+    target = form.get("album", "")
+    job = _collection_jobs.get(rel)
+    if job and job["status"] == "running":
+        return RedirectResponse(f"/collection/{rel}", status_code=303)
+    albums = await asyncio.to_thread(_load_collection, rel) or []
+    targets = [a for a in albums if a.complete and (target == "__all__" or a.rel == target)]
+    _collection_jobs[rel] = {
+        "status": "running", "current": "", "albums_total": len(targets),
+        "albums_done": 0, "photos": 0, "errors": [],
+    }
+    asyncio.create_task(asyncio.to_thread(_run_collection_job, rel, targets))
+    return RedirectResponse(f"/collection/{rel}", status_code=303)
+
+
+@app.post("/collection/{rel:path}/restore")
+async def collection_restore(request: Request, rel: str):
+    form = await request.form()
+    album_rel = form.get("album", "")
+    folder = _find_album(album_rel)
+    if folder:
+        await asyncio.to_thread(
+            coll.restore_album, folder, coll.backup_dir_for(BACKUP_ROOT, album_rel)
+        )
+        data = AlbumData.load(album_rel)
+        for filename in [f for f, s in data.photo_date_source.items() if s == "spreiding"]:
+            data.photo_date_source.pop(filename, None)
+            data.photo_dates.pop(filename, None)
+        data.applied_count = 0
+        data.save()
+    return RedirectResponse(f"/collection/{rel}", status_code=303)
 
 
 # ── Page: Global Settings ─────────────────────────────────────────────────────
@@ -361,7 +497,7 @@ async def index(request: Request):
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request):
     settings = GlobalSettings.load()
-    return templates.TemplateResponse("settings.html", {
+    return templates.TemplateResponse(request, "settings.html", {
         "request": request,
         "settings": settings,
     })
@@ -383,7 +519,7 @@ async def settings_save(request: Request):
     settings = GlobalSettings.load()
     settings.family_members = members
     settings.save()
-    return templates.TemplateResponse("settings.html", {
+    return templates.TemplateResponse(request, "settings.html", {
         "request": request,
         "settings": settings,
         "saved": True,
@@ -408,7 +544,7 @@ async def album_context_page(request: Request, album_rel: str):
     album_data = AlbumData.load(album_rel)
     photos = _load_photos(folder)
     photo_filenames_json = json.dumps([p.path.name for p in photos])
-    return templates.TemplateResponse("album_context.html", {
+    return templates.TemplateResponse(request, "album_context.html", {
         "request": request,
         "album_rel": album_rel,
         "album_data": album_data,
@@ -445,7 +581,7 @@ async def album_context_save(request: Request, album_rel: str):
     folder = _find_album(album_rel)
     photos = _load_photos(folder)
     photo_filenames_json = json.dumps([p.path.name for p in photos])
-    return templates.TemplateResponse("album_context.html", {
+    return templates.TemplateResponse(request, "album_context.html", {
         "request": request,
         "album_rel": album_rel,
         "album_data": album_data,
@@ -496,7 +632,7 @@ async def save_face_labels(request: Request, album_rel: str):
 
     folder = _find_album(album_rel)
     photos = _load_photos(folder)
-    return templates.TemplateResponse("dates.html", {
+    return templates.TemplateResponse(request, "dates.html", {
         "request": request,
         "album_rel": album_rel,
         "photos": photos,
@@ -513,7 +649,7 @@ async def date_review_page(request: Request, album_rel: str):
         return HTMLResponse("Map niet gevonden", status_code=404)
     photos = _load_photos(folder)
     album_data = AlbumData.load(album_rel)
-    return templates.TemplateResponse("dates.html", {
+    return templates.TemplateResponse(request, "dates.html", {
         "request": request,
         "album_rel": album_rel,
         "photos": photos,
@@ -583,7 +719,7 @@ async def apply_dates(request: Request, album_rel: str):
     album_data.applied_count = count
     album_data.save()
 
-    return templates.TemplateResponse("applied.html", {
+    return templates.TemplateResponse(request, "applied.html", {
         "request": request,
         "album_rel": album_rel,
         "folder_name": folder.name,
@@ -607,7 +743,7 @@ async def backups_page(request: Request, album_rel: str):
         for p in photos
         if p.path.with_suffix(p.path.suffix + ".bak").exists()
     ]
-    return templates.TemplateResponse("backups.html", {
+    return templates.TemplateResponse(request, "backups.html", {
         "request": request,
         "album_rel": album_rel,
         "folder_name": folder.name,
@@ -644,7 +780,7 @@ async def restore_backups(request: Request, album_rel: str):
         for p in photos
         if p.path.with_suffix(p.path.suffix + ".bak").exists()
     ]
-    return templates.TemplateResponse("backups.html", {
+    return templates.TemplateResponse(request, "backups.html", {
         "request": request,
         "album_rel": album_rel,
         "folder_name": folder.name,

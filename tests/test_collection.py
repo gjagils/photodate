@@ -105,7 +105,9 @@ def test_apply_and_restore_album(tmp_path):
     first = album.photos[0]
     exif = piexif.load(str(first))
     assert exif["Exif"][piexif.ExifIFD.DateTimeOriginal] == b"1988:10:01 12:00:00"
-    assert b"Datum geschat: oktober 1988" in exif["0th"][piexif.ImageIFD.ImageDescription]
+    description = exif["0th"][piexif.ImageIFD.ImageDescription]
+    assert description.startswith(b"Datum geschat: oktober 1988")
+    assert b"?" not in description
     assert datetime.fromtimestamp(os.path.getmtime(first)).year == 1988
     assert (backups / first.name).exists()
 

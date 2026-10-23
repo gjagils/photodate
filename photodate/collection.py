@@ -1,5 +1,6 @@
 """Date whole collections of scanned albums from folder names and photo order, without AI."""
 import calendar
+import io
 import logging
 import os
 import re
@@ -153,10 +154,9 @@ def period_label(start: Optional[date], end: Optional[date]) -> str:
 
 
 def describe_estimate(dt: datetime, album_name: str, start: date, end: date) -> str:
-    return (
-        f"Datum geschat: {MONTH_NAMES[dt.month]} {dt.year} "
-        f"(album {album_name}, {period_label(start, end)})"
-    )
+    # EXIF ImageDescription is ASCII-only, so no en dash here.
+    period = period_label(start, end).replace("–", "-")
+    return f"Datum geschat: {MONTH_NAMES[dt.month]} {dt.year} (album {album_name}, {period})"
 
 
 @dataclass
@@ -282,7 +282,14 @@ def write_estimated_date(path: Path, dt: datetime, description: str, backup_dir:
     except Exception:
         # Phone EXIF sometimes holds tags piexif can't re-serialise; keep only what matters.
         exif_bytes = apply(_minimal_exif(exif))
-    piexif.insert(exif_bytes, str(path))
+    out = io.BytesIO()
+    piexif.insert(exif_bytes, path.read_bytes(), out)
+    # On SMB/NFS the server stamps mtime when buffered writes land; flush before setting it.
+    with open(path, "r+b") as fh:
+        fh.write(out.getvalue())
+        fh.truncate()
+        fh.flush()
+        os.fsync(fh.fileno())
 
     try:
         ts = time.mktime(dt.timetuple())

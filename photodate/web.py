@@ -166,11 +166,12 @@ async def thumbnail(album_rel: str, filename: str, size: int = 150):
 # --- Page: Home (album list, only directories) ---
 
 def _collections(albums: list[dict]) -> list[tuple[str, int]]:
-    """Parent folders holding two or more albums."""
+    """Parent folders holding two or more albums; year/month folders (all digits) don't count."""
     counts: dict[str, int] = {}
     for album in albums:
-        parent = str(Path(album["label"]).parent)
-        if parent != ".":
+        label = Path(album["label"])
+        parent = str(label.parent)
+        if parent != "." and not label.name.isdigit():
             counts[parent] = counts.get(parent, 0) + 1
     return sorted((p, n) for p, n in counts.items() if n >= 2)
 

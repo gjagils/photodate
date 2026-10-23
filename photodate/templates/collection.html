@@ -5,7 +5,9 @@
     Elke foto krijgt een datum binnen de periode van zijn album, in de volgorde van het album.
     Niets invullen: de periode komt uit de mapnaam of van het album ervoor en erna.
     Laat je eerst de gebeurtenissen herkennen (AI), dan krijgen foto's van hetzelfde moment
-    dezelfde dag en lopen vakanties per dag door. In de foto komt "Datum geschat: …" te staan.
+    dezelfde dag en lopen vakanties per dag door. Herkende seizoenen (zomer, winter …) worden
+    daarbij gerespecteerd; aan het begin en eind van een album mag een foto dan tot vier maanden
+    buiten de periode vallen. In de foto komt "Datum geschat: …" te staan.
     De originelen worden bewaard.
 </p>
 
@@ -71,7 +73,7 @@
         <tr>
             <td>
                 <a href="/album/{{ a.rel }}">{{ a.name }}</a>
-                <div class="muted">{{ a.photos|length }} foto's{% if r.moments %} · {{ r.moments }} momenten{% endif %}{% if r.dated %} · <span class="success">{{ r.dated }} gedateerd</span>{% endif %}</div>
+                <div class="muted">{{ a.photos|length }} foto's{% if r.moments %} · {{ r.moments }} momenten{% endif %}{% if r.seasoned %} · {{ r.seasoned }} met seizoen{% endif %}{% if r.dated %} · <span class="success">{{ r.dated }} gedateerd</span>{% endif %}</div>
             </td>
             <td>
                 {% if a.complete %}{{ period_label(a.start, a.end) }}{% else %}<span class="warning">{{ period_label(a.start, a.end) }}</span>{% endif %}

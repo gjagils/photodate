@@ -12,6 +12,7 @@ from PIL import Image, ImageOps
 logger = logging.getLogger(__name__)
 
 RELATIONS = ("moment", "reeks", "nieuw")
+SEASONS = ("lente", "zomer", "herfst", "winter", "onbekend")
 EVENTS_MODEL = os.environ.get("OPENAI_EVENTS_MODEL", "gpt-4o")
 BATCH_SIZE = 12
 THUMB_SIZE = 512
@@ -28,8 +29,16 @@ uitje of één middag op de camping)
 
 Geef ook per foto een kort label van de gebeurtenis (hooguit 4 woorden, Nederlands).
 
+Schat per foto het seizoen (Nederland), alleen op duidelijke aanwijzingen:
+- "zomer": zwemkleding, korte broeken en blote armen in de zon, strand, volle zomerse begroeiing
+- "herfst": verkleurd of vallend blad, kale bomen met jassen maar zonder sneeuw, Sint-Maarten
+- "winter": sneeuw, ijs, dikke winterjassen en mutsen, kerstboom of kerstversiering
+- "lente": bloesem, bollenvelden, jong blad, Pasen
+- "onbekend": binnenopnames of te weinig aanwijzingen. Gebruik dit liever dan te gokken.
+
 Antwoord alleen met JSON in deze vorm:
-{{"overgangen": [{m} waarden uit "moment", "reeks", "nieuw"], "labels": [{n} korte labels]}}
+{{"overgangen": [{m} waarden uit "moment", "reeks", "nieuw"], "labels": [{n} korte labels], \
+"seizoenen": [{n} waarden uit "lente", "zomer", "herfst", "winter", "onbekend"]}}
 """
 
 
@@ -44,8 +53,8 @@ def _encode(path: Path) -> str:
 
 
 def classify_batch(client, paths: list[Path], album: str, period: str, model: str = EVENTS_MODEL
-                   ) -> tuple[list[str], list[str]]:
-    """Return (relations between consecutive photos, one label per photo) for one batch."""
+                   ) -> tuple[list[str], list[str], list[str]]:
+    """Return (relations between consecutive photos, label per photo, season per photo)."""
     n = len(paths)
     content: list[dict] = [{"type": "text", "text": PROMPT.format(n=n, m=n - 1, album=album, period=period)}]
     for i, path in enumerate(paths, 1):
@@ -69,7 +78,9 @@ def classify_batch(client, paths: list[Path], album: str, period: str, model: st
     relations += ["nieuw"] * (n - 1 - len(relations))
     labels = [str(l)[:60] for l in data.get("labels", [])][:n]
     labels += [""] * (n - len(labels))
-    return relations, labels
+    seasons = [s if s in SEASONS else "onbekend" for s in data.get("seizoenen", [])][:n]
+    seasons += ["onbekend"] * (n - len(seasons))
+    return relations, labels, seasons
 
 
 def detect_links(
@@ -79,22 +90,27 @@ def detect_links(
     period: str,
     model: str = EVENTS_MODEL,
     progress: Optional[Callable[[int, int], None]] = None,
-) -> tuple[list[str], list[str]]:
-    """links[i] is how photo i relates to photo i-1 (links[0] is always "nieuw")."""
+) -> tuple[list[str], list[str], list[str]]:
+    """Return (links, labels, seasons); links[i] is how photo i relates to photo i-1."""
     n = len(paths)
     links = ["nieuw"] * n
     labels = [""] * n
+    seasons = ["onbekend"] * n
     start = 0
     while start < n - 1:
         end = min(start + BATCH_SIZE, n)
-        relations, batch_labels = classify_batch(client, paths[start:end], album, period, model)
+        relations, batch_labels, batch_seasons = classify_batch(
+            client, paths[start:end], album, period, model,
+        )
         for k, relation in enumerate(relations):
             links[start + k + 1] = relation
-        for k, label in enumerate(batch_labels):
+        for k, (label, season) in enumerate(zip(batch_labels, batch_seasons)):
             if not labels[start + k]:
                 labels[start + k] = label
+            if seasons[start + k] == "onbekend":
+                seasons[start + k] = season
         if progress:
             progress(end, n)
         # Batches overlap by one photo so every transition is judged with context on both sides.
         start = end - 1
-    return links, labels
+    return links, labels, seasons

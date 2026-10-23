@@ -13,7 +13,7 @@ import openai
 from fastapi import FastAPI, Form, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
-from PIL import Image
+from PIL import Image, ImageOps
 try:
     from pillow_heif import register_heif_opener
     register_heif_opener()
@@ -155,7 +155,7 @@ async def thumbnail(album_rel: str, filename: str, size: int = 150):
     filepath = folder / filename
     if not filepath.is_file():
         return Response(status_code=404)
-    img = Image.open(filepath)
+    img = ImageOps.exif_transpose(Image.open(filepath))
     img.thumbnail((size, size))
     if img.mode not in ("RGB", "L"):
         img = img.convert("RGB")

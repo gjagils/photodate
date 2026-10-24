@@ -10,6 +10,7 @@ PAGES = [
     "/",
     "/icloud",
     "/settings",
+    "/health",
     "/organize",
     "/gphotos-local",
 ]

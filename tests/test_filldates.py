@@ -130,3 +130,38 @@ def test_settle_mtimes(tmp_path):
     assert fd.settle_mtimes([plan], wait=0) == 1
     assert datetime.fromtimestamp(photo.stat().st_mtime) == datetime(2019, 6, 15, 12, 0)
     assert fd.settle_mtimes([plan], wait=0) == 0
+
+
+import hashlib
+import shutil as _shutil
+
+import pytest
+
+
+def _pixels(path: Path) -> str:
+    with Image.open(path) as im:
+        return hashlib.md5(im.convert("RGB").tobytes()).hexdigest()
+
+
+@pytest.mark.skipif(_shutil.which("exiftool") is None, reason="exiftool niet geïnstalleerd")
+@pytest.mark.parametrize("ext", ["png", "heic"])
+def test_exiftool_writes_date_without_touching_pixels(tmp_path, ext):
+    if ext == "heic":
+        pytest.importorskip("pillow_heif")
+    photo = tmp_path / "2019" / "06" / f"IMG_0001.{ext}"
+    photo.parent.mkdir(parents=True)
+    Image.new("RGB", (64, 48), (200, 40, 90)).save(photo)
+    before = _pixels(photo)
+    plan = fd.Plan(photo, datetime(2019, 6, 12, 16, 33, 20), "takeout")
+    fd.write_plan(plan, tmp_path / "backups")
+    assert fd.exif_date(photo) == "2019:06:12 16:33:20"
+    assert _pixels(photo) == before
+    assert (tmp_path / "backups" / "06" / photo.name).exists()
+    assert datetime.fromtimestamp(photo.stat().st_mtime) == datetime(2019, 6, 12, 16, 33, 20)
+
+
+def test_can_write(monkeypatch):
+    monkeypatch.setattr(fd, "EXIFTOOL", None)
+    assert fd.can_write(Path("a.JPG")) and not fd.can_write(Path("a.HEIC"))
+    monkeypatch.setattr(fd, "EXIFTOOL", "/usr/bin/exiftool")
+    assert fd.can_write(Path("a.HEIC")) and fd.can_write(Path("a.png")) and not fd.can_write(Path("a.gif"))

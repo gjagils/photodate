@@ -3,6 +3,8 @@ import json
 import logging
 import os
 import re
+import shutil
+import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -27,6 +29,13 @@ logger = logging.getLogger(__name__)
 LOCAL_TZ = ZoneInfo("Europe/Amsterdam")
 PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".tif", ".tiff", ".gif"}
 WRITABLE = {".jpg", ".jpeg"}  # EXIF in place without re-encoding
+EXIFTOOL_WRITABLE = {".heic", ".heif", ".png", ".tif", ".tiff"}  # metadata only, via exiftool
+EXIFTOOL = shutil.which("exiftool")
+
+
+def can_write(path: Path) -> bool:
+    ext = path.suffix.lower()
+    return ext in WRITABLE or (ext in EXIFTOOL_WRITABLE and EXIFTOOL is not None)
 SKIP_DIRS = {"@eaDir", "#recycle", ".git", "nietzelfgenomen"}
 FIRST_YEAR = 1990
 
@@ -242,7 +251,36 @@ def settle_mtimes(plans: list[Plan], wait: float = 15.0) -> int:
     return fixed
 
 
+def _write_with_exiftool(plan: Plan, backup_dir: Path) -> None:
+    """HEIC/PNG/TIFF: exiftool rewrites only the metadata, never the image data."""
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup = backup_dir / plan.path.name
+    if not backup.exists():
+        shutil.copy2(plan.path, backup)
+    stamp = plan.when.strftime("%Y:%m:%d %H:%M:%S")
+    args = [
+        EXIFTOOL, "-q", "-overwrite_original", "-m",
+        f"-EXIF:DateTimeOriginal={stamp}", f"-EXIF:CreateDate={stamp}", f"-EXIF:ModifyDate={stamp}",
+        f"-XMP-photoshop:DateCreated={stamp}", f"-XMP-xmp:CreateDate={stamp}",
+    ]
+    current = subprocess.run([EXIFTOOL, "-s3", "-EXIF:ImageDescription", str(plan.path)],
+                             capture_output=True, text=True, timeout=60).stdout.strip()
+    if not current:
+        args.append(f"-EXIF:ImageDescription={description(plan)}")
+    result = subprocess.run(args + [str(plan.path)], capture_output=True, text=True, timeout=120)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "exiftool faalde")
+    ts = time.mktime(plan.when.timetuple())
+    os.utime(plan.path, (ts, ts))
+
+
 def write_plan(plan: Plan, backup_dir: Path) -> None:
+    folder_backup = backup_dir / plan.path.parent.name
+    if plan.path.suffix.lower() in EXIFTOOL_WRITABLE:
+        if EXIFTOOL is None:
+            raise RuntimeError("exiftool is niet geïnstalleerd")
+        _write_with_exiftool(plan, folder_backup)
+        return
     stamp = plan.when.strftime("%Y:%m:%d %H:%M:%S").encode()
     text = description(plan).encode("ascii", "replace")
 
@@ -252,4 +290,4 @@ def write_plan(plan: Plan, backup_dir: Path) -> None:
         e["0th"][piexif.ImageIFD.DateTime] = stamp
         e["0th"].setdefault(piexif.ImageIFD.ImageDescription, text)
 
-    rewrite_exif(plan.path, mutate, backup_dir / plan.path.parent.name, time.mktime(plan.when.timetuple()))
+    rewrite_exif(plan.path, mutate, folder_backup, time.mktime(plan.when.timetuple()))

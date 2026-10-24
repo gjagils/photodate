@@ -2,9 +2,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system dependencies for pillow-heif (HEIC support)
+# System dependencies: pillow-heif (HEIC support) and exiftool (dates in HEIC/PNG without re-encoding)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libheif-dev \
+    libimage-exiftool-perl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy source and install dependencies

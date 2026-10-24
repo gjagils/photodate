@@ -160,8 +160,29 @@ def test_exiftool_writes_date_without_touching_pixels(tmp_path, ext):
     assert datetime.fromtimestamp(photo.stat().st_mtime) == datetime(2019, 6, 12, 16, 33, 20)
 
 
-def test_can_write(monkeypatch):
+def test_can_write(monkeypatch, tmp_path):
+    jpg, png, gif = tmp_path / "a.JPG", tmp_path / "a.png", tmp_path / "a.gif"
+    Image.new("RGB", (8, 8)).save(jpg, format="JPEG")
+    Image.new("RGB", (8, 8)).save(png, format="PNG")
+    Image.new("RGB", (8, 8)).save(gif, format="GIF")
     monkeypatch.setattr(fd, "EXIFTOOL", None)
-    assert fd.can_write(Path("a.JPG")) and not fd.can_write(Path("a.HEIC"))
+    assert fd.can_write(jpg) and not fd.can_write(png)
     monkeypatch.setattr(fd, "EXIFTOOL", "/usr/bin/exiftool")
-    assert fd.can_write(Path("a.HEIC")) and fd.can_write(Path("a.png")) and not fd.can_write(Path("a.gif"))
+    assert fd.can_write(png) and not fd.can_write(gif)
+
+
+def test_jpeg_with_heic_name_is_written_as_jpeg(tmp_path):
+    photo = tmp_path / "2019" / "00" / "IMG_1874(1).HEIC"
+    photo.parent.mkdir(parents=True)
+    Image.new("RGB", (40, 30), (1, 2, 3)).save(photo, format="JPEG")
+    assert fd.file_kind(photo) == "jpeg" and fd.can_write(photo)
+    fd.write_plan(fd.Plan(photo, datetime(2019, 3, 1, 12, 0), "origineel", "IMG_1874.HEIC"), tmp_path / "bk")
+    assert fd.exif_date(photo) == "2019:03:01 12:00:00"
+
+
+def test_unknown_bytes_are_not_written(tmp_path):
+    junk = tmp_path / "x.JPG"
+    junk.write_bytes(b"\x84\xde\x80[" + b"\x00" * 64)
+    assert fd.file_kind(junk) == "onbekend" and not fd.can_write(junk)
+    with pytest.raises(RuntimeError):
+        fd.write_plan(fd.Plan(junk, datetime(2018, 7, 27, 12, 0), "bestandsnaam"), tmp_path / "bk")

@@ -33,9 +33,28 @@ EXIFTOOL_WRITABLE = {".heic", ".heif", ".png", ".tif", ".tiff"}  # metadata only
 EXIFTOOL = shutil.which("exiftool")
 
 
+def file_kind(path: Path) -> str:
+    """What the bytes really are; Takeout often keeps .HEIC/.PNG names on JPEG files."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(12)
+    except OSError:
+        return "onbekend"
+    if head[:2] == b"\xff\xd8":
+        return "jpeg"
+    if head[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if head[4:8] == b"ftyp":
+        return "heif"
+    if head[:4] in (b"II*\x00", b"MM\x00*"):
+        return "tiff"
+    return "onbekend"
+
+
 def can_write(path: Path) -> bool:
-    ext = path.suffix.lower()
-    return ext in WRITABLE or (ext in EXIFTOOL_WRITABLE and EXIFTOOL is not None)
+    kind = file_kind(path)
+    return kind == "jpeg" or (kind in ("png", "heif", "tiff") and EXIFTOOL is not None)
+
 SKIP_DIRS = {"@eaDir", "#recycle", ".git", "nietzelfgenomen"}
 FIRST_YEAR = 1990
 
@@ -57,7 +76,7 @@ class Plan:
 
 def exif_date(path: Path) -> Optional[str]:
     try:
-        if path.suffix.lower() in WRITABLE:
+        if file_kind(path) == "jpeg":
             exif = piexif.load(str(path))
         else:
             raw = Image.open(path).info.get("exif")
@@ -276,11 +295,14 @@ def _write_with_exiftool(plan: Plan, backup_dir: Path) -> None:
 
 def write_plan(plan: Plan, backup_dir: Path) -> None:
     folder_backup = backup_dir / plan.path.parent.name
-    if plan.path.suffix.lower() in EXIFTOOL_WRITABLE:
+    kind = file_kind(plan.path)
+    if kind in ("png", "heif", "tiff"):
         if EXIFTOOL is None:
             raise RuntimeError("exiftool is niet geïnstalleerd")
         _write_with_exiftool(plan, folder_backup)
         return
+    if kind != "jpeg":
+        raise RuntimeError("geen herkenbare afbeelding (beschadigd of onbekend formaat)")
     stamp = plan.when.strftime("%Y:%m:%d %H:%M:%S").encode()
     text = description(plan).encode("ascii", "replace")
 

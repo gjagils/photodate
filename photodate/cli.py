@@ -270,7 +270,7 @@ def restore(
 @app.command("fill-dates")
 def fill_dates(
     folder: Path = typer.Argument(..., help="Map uit de fotobibliotheek, bijv. Fotobibliotheek/2019"),
-    apply: bool = typer.Option(False, "--apply", help="Schrijf de datums echt weg (alleen JPEG)"),
+    apply: bool = typer.Option(False, "--apply", help="Schrijf de datums echt weg (JPEG; HEIC/PNG/TIFF met exiftool)"),
     backup_root: Optional[Path] = typer.Option(None, "--backup-dir", help="Map voor originelen"),
     report: Optional[Path] = typer.Option(None, "--csv", help="Schrijf het plan als CSV"),
     year_only: bool = typer.Option(False, "--ook-alleen-jaar", help="Schrijf ook foto's waarvan alleen het jaar bekend is"),
@@ -287,7 +287,7 @@ def fill_dates(
     plans = fd.plan_folder(folder)
 
     table = Table(title=f"Zonder datum: {folder} ({len(plans)} foto's)")
-    for col in ("Submap", "Totaal", "Takeout", "Bestandsnaam", "Origineel", "Bestandsdatum", "Map", "Alleen jaar", "Niet-JPEG", "Andere maand"):
+    for col in ("Submap", "Totaal", "Takeout", "Bestandsnaam", "Origineel", "Bestandsdatum", "Map", "Alleen jaar", "Niet schrijfbaar", "Andere maand"):
         table.add_column(col, justify="right" if col != "Submap" else "left")
     by_dir = collections.defaultdict(list)
     for p in plans:
@@ -296,7 +296,7 @@ def fill_dates(
         src = collections.Counter(p.source for p in items)
         year, month = fd.folder_month(items[0].path)
         other = sum(1 for p in items if p.when and month and (p.when.year, p.when.month) != (year, month))
-        non_jpeg = sum(1 for p in items if p.path.suffix.lower() not in fd.WRITABLE)
+        non_jpeg = sum(1 for p in items if not fd.can_write(p.path))
         table.add_row(str(sub), str(len(items)), str(src["takeout"]), str(src["bestandsnaam"]), str(src["origineel"]),
                       str(src["bestandsdatum"]), str(src["map"]), str(src["jaar"] + src["geen"]), str(non_jpeg), str(other))
     console.print(table)
@@ -316,7 +316,7 @@ def fill_dates(
     written = errors = skipped = 0
     done = []
     for p in plans:
-        if not p.when or p.path.suffix.lower() not in fd.WRITABLE or (p.source == "jaar" and not year_only):
+        if not p.when or not fd.can_write(p.path) or (p.source == "jaar" and not year_only):
             skipped += 1
             continue
         try:
@@ -328,7 +328,7 @@ def fill_dates(
             console.print(f"[red]{p.path.name}: {exc}[/red]")
     if done:
         console.print(f"Bestandsdatums nagelopen: {fd.settle_mtimes(done)} opnieuw gezet")
-    console.print(f"[green]{written} geschreven[/green], {skipped} overgeslagen (geen JPEG, alleen jaar of geen datum), {errors} fouten")
+    console.print(f"[green]{written} geschreven[/green], {skipped} overgeslagen (niet schrijfbaar, alleen jaar of geen datum), {errors} fouten")
 
 
 if __name__ == "__main__":

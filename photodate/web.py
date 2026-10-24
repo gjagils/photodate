@@ -194,18 +194,25 @@ def _load_collection(rel: str) -> list[coll.CollectionAlbum] | None:
     folder = _find_album(rel)
     if not folder:
         return None
-    manual = {}
+    manual, moves = {}, {}
     for sub in folder.iterdir():
         if sub.is_dir():
             sub_rel = f"{rel}/{sub.name}"
             data = AlbumData.load(sub_rel)
             if data.start_date or data.end_date:
                 manual[sub_rel] = (data.start_date, data.end_date)
-    albums = coll.load_collection(folder, rel, manual)
+            if data.order_moves:
+                moves[sub_rel] = data.order_moves
+    albums = coll.load_collection(folder, rel, manual, moves)
     family = _family()
     for album in albums:
         data = AlbumData.load(album.rel)
-        album.links = [data.photo_links.get(p.name, "") for p in album.photos]
+        # Where a move puts other photos next to each other, the judged relation no longer applies.
+        album.links = [
+            ("nieuw" if p.name in album.moved_starts and data.photo_links.get(p.name) else
+             data.photo_links.get(p.name, ""))
+            for p in album.photos
+        ]
         album.seasons = [data.photo_seasons.get(p.name, "onbekend") for p in album.photos]
         album.holidays = [data.photo_holidays.get(p.name, "geen") for p in album.photos]
         album.ages = [data.photo_ages.get(p.name) for p in album.photos]
@@ -291,6 +298,7 @@ async def collection_page(request: Request, rel: str, saved: bool = False):
             "dated": sum(1 for s in data.photo_date_source.values() if s == "spreiding"),
             "manual_start": data.start_date[:7],
             "manual_end": data.end_date[:7],
+            "order_moves": data.order_moves,
             "has_backup": coll.backup_dir_for(BACKUP_ROOT, a.rel).is_dir(),
             "moments": coll.moment_count(a.links) if a.has_links else 0,
             "seasoned": sum(1 for s in a.seasons if s in coll.SEASON_MONTH_COST),
@@ -319,6 +327,8 @@ async def collection_save_periods(request: Request, rel: str):
         data = AlbumData.load(album_rel)
         data.start_date = start.isoformat() if start else ""
         data.end_date = end.isoformat() if end else ""
+        if f"order_{i}" in form:
+            data.order_moves = form.get(f"order_{i}", "").strip()
         data.save()
         i += 1
     return RedirectResponse(f"/collection/{rel}?saved=1", status_code=303)

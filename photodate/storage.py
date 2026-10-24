@@ -104,6 +104,7 @@ class AlbumData:
     photo_seasons: dict[str, str] = field(default_factory=dict)  # filename -> lente|zomer|herfst|winter|onbekend
     photo_holidays: dict[str, str] = field(default_factory=dict)  # filename -> sinterklaas|kerst|...|geen
     photo_ages: dict[str, int] = field(default_factory=dict)  # filename -> visible birthday age
+    order_moves: str = ""  # e.g. "168-201 na 004" for pages scanned out of order
 
     def save(self) -> None:
         STORAGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -139,4 +140,5 @@ class AlbumData:
             photo_seasons=data.get("photo_seasons", {}),
             photo_holidays=data.get("photo_holidays", {}),
             photo_ages=data.get("photo_ages", {}),
+            order_moves=data.get("order_moves", ""),
         )

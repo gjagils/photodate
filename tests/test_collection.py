@@ -302,3 +302,33 @@ def test_holiday_note_only_when_date_fits(tmp_path):
     assert album.holiday_note(album.photos[0], date(1989, 6, 16)) == ""
     assert album.holiday_note(album.photos[0], date(1989, 2, 6)) == "carnaval"
     assert album.holiday_note(album.photos[1], date(1988, 12, 9)) == "Sinterklaas"
+
+
+def _nums(paths):
+    return [int(p.stem.rsplit("_", 1)[1]) for p in paths]
+
+
+def test_order_moves_rules():
+    photos = [Path(f"boek_{i:03d}.jpg") for i in range(1, 11)]
+    assert _nums(coll.apply_order_moves(photos, "8-10 na 002")[0]) == [1, 2, 8, 9, 10, 3, 4, 5, 6, 7]
+    assert _nums(coll.apply_order_moves(photos, "5 voor 2")[0]) == [1, 5, 2, 3, 4, 6, 7, 8, 9, 10]
+    assert _nums(coll.apply_order_moves(photos, "9-10 vooraan")[0]) == [9, 10, 1, 2, 3, 4, 5, 6, 7, 8]
+    assert _nums(coll.apply_order_moves(photos, "1-2 achteraan")[0]) == [3, 4, 5, 6, 7, 8, 9, 10, 1, 2]
+    assert _nums(coll.apply_order_moves(photos, "9-10 vooraan; 1 achteraan")[0])[:2] == [9, 10]
+
+
+def test_order_moves_report_problems_and_keep_order():
+    photos = [Path(f"boek_{i:03d}.jpg") for i in range(1, 6)]
+    order, errors = coll.apply_order_moves(photos, "foto 3 eerst; 40-50 na 1; 2-4 na 3")
+    assert _nums(order) == [1, 2, 3, 4, 5]
+    assert len(errors) == 3
+
+
+def test_load_collection_applies_moves_and_marks_new_neighbours(tmp_path):
+    _make_album(tmp_path / "Gils", "X - Jan '90 tot Jul '90", 10)
+    rel = "Gils/X - Jan '90 tot Jul '90"
+    album = coll.load_collection(tmp_path / "Gils", "Gils", moves={rel: "8-10 na 002"})[0]
+    assert _nums(album.photos) == [1, 2, 8, 9, 10, 3, 4, 5, 6, 7]
+    # 8 now follows 2, 3 now follows 10; 9 and 10 keep their neighbour.
+    assert album.moved_starts == {"boek_008.jpg", "boek_003.jpg"}
+    assert album.order_errors == []

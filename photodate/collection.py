@@ -418,6 +418,8 @@ class CollectionAlbum:
     holidays: list[str] = field(default_factory=list)  # per photo: recognised holiday or "geen"
     ages: list[Optional[int]] = field(default_factory=list)  # per photo: visible birthday age
     family: list[Person] = field(default_factory=list)
+    order_errors: list[str] = field(default_factory=list)
+    moved_starts: set[str] = field(default_factory=set)  # photos whose predecessor changed by a move
 
     @property
     def complete(self) -> bool:
@@ -485,13 +487,51 @@ def list_photos(folder: Path) -> list[Path]:
     ]
 
 
+MOVE_RE = re.compile(
+    r"^\s*(\d+)\s*(?:-\s*(\d+))?\s+(?:(na|voor)\s+(\d+)|(vooraan|achteraan))\s*$", re.IGNORECASE,
+)
+
+
+def apply_order_moves(photos: list[Path], spec: str) -> tuple[list[Path], list[str]]:
+    """Reorder by scan numbers, e.g. "168-201 na 004; 12 voor 3; 5-9 vooraan". Files keep their names."""
+    order = list(photos)
+    errors: list[str] = []
+    for rule in (r.strip() for r in re.split(r"[;\n]", spec or "")):
+        if not rule:
+            continue
+        m = MOVE_RE.match(rule)
+        if not m:
+            errors.append(f"niet begrepen: {rule}")
+            continue
+        a, b = int(m.group(1)), int(m.group(2) or m.group(1))
+        lo, hi = min(a, b), max(a, b)
+        block = [p for p in order if (n := _seq_number(p)) is not None and lo <= n <= hi]
+        if not block:
+            errors.append(f"geen foto's met nummer {lo}–{hi}")
+            continue
+        rest = [p for p in order if p not in block]
+        if m.group(5):
+            idx = 0 if m.group(5).lower() == "vooraan" else len(rest)
+        else:
+            target = int(m.group(4))
+            hits = [i for i, p in enumerate(rest) if _seq_number(p) == target]
+            if not hits:
+                errors.append(f"foto {target} niet gevonden (of zit in het blok zelf)")
+                continue
+            idx = hits[0] + 1 if m.group(3).lower() == "na" else hits[0]
+        order = rest[:idx] + block + rest[idx:]
+    return order, errors
+
+
 def load_collection(
     folder: Path,
     rel_prefix: str = "",
     manual: Optional[dict[str, tuple[str, str]]] = None,
+    moves: Optional[dict[str, str]] = None,
 ) -> list[CollectionAlbum]:
     """Albums directly under `folder`, with periods from manual input, folder name, then neighbours."""
     manual = manual or {}
+    moves = moves or {}
     albums = []
     for sub in sorted(folder.iterdir(), key=lambda p: p.name.lower()):
         if not sub.is_dir() or sub.name in SKIP_DIRS or sub.name.startswith((".", "_")):
@@ -504,6 +544,14 @@ def load_collection(
             folder=sub, rel=rel, name=sub.name, order=album_order(sub.name),
             photos=order_photos(photos),
         )
+        if moves.get(rel):
+            original = album.photos
+            album.photos, album.order_errors = apply_order_moves(original, moves[rel])
+            before = {p.name: (original[i - 1].name if i else None) for i, p in enumerate(original)}
+            album.moved_starts = {
+                p.name for i, p in enumerate(album.photos)
+                if (album.photos[i - 1].name if i else None) != before[p.name]
+            }
         start, end = parse_period(sub.name)
         if start:
             album.start, album.start_source = start, "naam"

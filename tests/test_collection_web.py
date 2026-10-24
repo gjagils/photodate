@@ -136,3 +136,22 @@ def test_album_save_is_atomic(tmp_path, monkeypatch):
         stop.set()
         t.join()
     assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_order_correction_saved_and_used(client, monkeypatch):
+    c, photos = client
+    album = "Gils/X - Jan '90 tot Jul '90"
+    r = c.post("/collection/Gils/periods", data={
+        "album_0": album, "start_0": "", "end_0": "", "order_0": "3 vooraan",
+    }, follow_redirects=False)
+    assert r.status_code == 303
+    page = c.get("/collection/Gils").text
+    assert 'value="3 vooraan"' in page
+
+    c.post("/collection/Gils/apply", data={"album": album})
+    _wait_done(c, "Gils")
+    first = piexif.load(str(photos / album / "boek_003.jpg"))["Exif"][piexif.ExifIFD.DateTimeOriginal]
+    assert first.startswith(b"1990:01:01")
+
+    c.post("/collection/Gils/periods", data={"album_0": album, "start_0": "", "end_0": ""})
+    assert 'value="3 vooraan"' in c.get("/collection/Gils").text  # saving periods only keeps the order

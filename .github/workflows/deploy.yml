@@ -113,10 +113,10 @@ jobs:
 
           HOST=$(sed -E 's#^(https?://[^:/]+).*#\1#' <<<"$BASE")
           for i in $(seq 1 12); do
-            CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$HOST:$APP_PORT/" || true)
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$HOST:$APP_PORT/health" || true)
             echo "app poging $i/12: HTTP $CODE"
             if [ "$CODE" = "200" ]; then exit 0; fi
             sleep 5
           done
-          echo "::error::App reageert niet op $HOST:$APP_PORT"
+          echo "::error::App reageert niet op $HOST:$APP_PORT/health"
           exit 1

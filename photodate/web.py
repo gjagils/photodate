@@ -177,6 +177,12 @@ def _collections(albums: list[dict]) -> list[tuple[str, int]]:
     return sorted((p, n) for p, n in counts.items() if n >= 2)
 
 
+@app.get("/health")
+async def health():
+    """Cheap liveness check for the deploy workflow (the home page walks the whole library)."""
+    return {"status": "ok"}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     albums = _get_all_albums()

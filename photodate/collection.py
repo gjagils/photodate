@@ -587,14 +587,13 @@ def _minimal_exif(exif: dict) -> dict:
     }
 
 
-def write_estimated_date(path: Path, dt: datetime, description: str, backup_dir: Path) -> None:
-    """Write the estimated date + description into EXIF (no re-encode); keep the first original."""
+def rewrite_exif(path: Path, mutate, backup_dir: Path, mtime: Optional[float]) -> None:
+    """Change EXIF in place without re-encoding the image; keep the first original as backup."""
     backup_dir.mkdir(parents=True, exist_ok=True)
     backup = backup_dir / path.name
     if not backup.exists():
         shutil.copy2(path, backup)
 
-    stamp = dt.strftime("%Y:%m:%d %H:%M:%S").encode()
     try:
         exif = piexif.load(str(path))
     except Exception:
@@ -602,18 +601,15 @@ def write_estimated_date(path: Path, dt: datetime, description: str, backup_dir:
     exif.pop("thumbnail", None)
     exif["1st"] = {}
 
-    def apply(e: dict) -> bytes:
-        e["Exif"][piexif.ExifIFD.DateTimeOriginal] = stamp
-        e["Exif"][piexif.ExifIFD.DateTimeDigitized] = stamp
-        e["0th"][piexif.ImageIFD.DateTime] = stamp
-        e["0th"][piexif.ImageIFD.ImageDescription] = description.encode("ascii", "replace")
+    def dump(e: dict) -> bytes:
+        mutate(e)
         return piexif.dump(e)
 
     try:
-        exif_bytes = apply(exif)
+        exif_bytes = dump(exif)
     except Exception:
         # Phone EXIF sometimes holds tags piexif can't re-serialise; keep only what matters.
-        exif_bytes = apply(_minimal_exif(exif))
+        exif_bytes = dump(_minimal_exif(exif))
     out = io.BytesIO()
     piexif.insert(exif_bytes, path.read_bytes(), out)
     # On SMB/NFS the server stamps mtime when buffered writes land; flush before setting it.
@@ -623,11 +619,28 @@ def write_estimated_date(path: Path, dt: datetime, description: str, backup_dir:
         fh.flush()
         os.fsync(fh.fileno())
 
+    if mtime is not None:
+        try:
+            os.utime(path, (mtime, mtime))
+        except (OSError, OverflowError) as exc:
+            logger.info("Kon bestandsdatum niet zetten voor %s: %s", path.name, exc)
+
+
+def write_estimated_date(path: Path, dt: datetime, description: str, backup_dir: Path) -> None:
+    """Write the estimated date + description into EXIF (no re-encode); keep the first original."""
+    stamp = dt.strftime("%Y:%m:%d %H:%M:%S").encode()
+
+    def mutate(e: dict) -> None:
+        e["Exif"][piexif.ExifIFD.DateTimeOriginal] = stamp
+        e["Exif"][piexif.ExifIFD.DateTimeDigitized] = stamp
+        e["0th"][piexif.ImageIFD.DateTime] = stamp
+        e["0th"][piexif.ImageIFD.ImageDescription] = description.encode("ascii", "replace")
+
     try:
-        ts = time.mktime(dt.timetuple())
-        os.utime(path, (ts, ts))
-    except (OSError, OverflowError) as exc:
-        logger.info("Kon bestandsdatum niet zetten voor %s: %s", path.name, exc)
+        mtime: Optional[float] = time.mktime(dt.timetuple())
+    except (OverflowError, ValueError):
+        mtime = None
+    rewrite_exif(path, mutate, backup_dir, mtime)
 
 
 def apply_album(album: CollectionAlbum, backup_dir: Path) -> tuple[dict[str, str], list[str]]:

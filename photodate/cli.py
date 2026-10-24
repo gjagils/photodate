@@ -267,5 +267,69 @@ def restore(
     console.print(f"[green]{n} originelen teruggezet.[/green]")
 
 
+@app.command("fill-dates")
+def fill_dates(
+    folder: Path = typer.Argument(..., help="Map uit de fotobibliotheek, bijv. Fotobibliotheek/2019"),
+    apply: bool = typer.Option(False, "--apply", help="Schrijf de datums echt weg (alleen JPEG)"),
+    backup_root: Optional[Path] = typer.Option(None, "--backup-dir", help="Map voor originelen"),
+    report: Optional[Path] = typer.Option(None, "--csv", help="Schrijf het plan als CSV"),
+    year_only: bool = typer.Option(False, "--ook-alleen-jaar", help="Schrijf ook foto's waarvan alleen het jaar bekend is"),
+):
+    """Herstel ontbrekende opnamedatums uit Takeout-JSON, bestandsnaam, origineel, bestandsdatum of map."""
+    import collections
+    import csv
+
+    from . import filldates as fd
+
+    if not folder.is_dir():
+        console.print(f"[red]Map niet gevonden: {folder}[/red]")
+        raise typer.Exit(1)
+    plans = fd.plan_folder(folder)
+
+    table = Table(title=f"Zonder datum: {folder} ({len(plans)} foto's)")
+    for col in ("Submap", "Totaal", "Takeout", "Bestandsnaam", "Origineel", "Bestandsdatum", "Map", "Alleen jaar", "Niet-JPEG", "Andere maand"):
+        table.add_column(col, justify="right" if col != "Submap" else "left")
+    by_dir = collections.defaultdict(list)
+    for p in plans:
+        by_dir[p.path.parent.relative_to(folder) if p.path.parent != folder else Path(".")].append(p)
+    for sub, items in sorted(by_dir.items(), key=lambda kv: str(kv[0])):
+        src = collections.Counter(p.source for p in items)
+        year, month = fd.folder_month(items[0].path)
+        other = sum(1 for p in items if p.when and month and (p.when.year, p.when.month) != (year, month))
+        non_jpeg = sum(1 for p in items if p.path.suffix.lower() not in fd.WRITABLE)
+        table.add_row(str(sub), str(len(items)), str(src["takeout"]), str(src["bestandsnaam"]), str(src["origineel"]),
+                      str(src["bestandsdatum"]), str(src["map"]), str(src["jaar"] + src["geen"]), str(non_jpeg), str(other))
+    console.print(table)
+
+    if report:
+        with report.open("w", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["pad", "bron", "datum", "toelichting"])
+            for p in plans:
+                w.writerow([str(p.path.relative_to(folder)), p.source, p.when.isoformat() if p.when else "", p.note])
+        console.print(f"Plan geschreven naar {report}")
+
+    if not apply:
+        console.print("\n[dim]Proefweergave. Gebruik --apply om JPEG-bestanden te schrijven.[/dim]")
+        return
+    backup_root = (backup_root or _default_backup_root()) / str(folder).strip("/").replace("/", "__")
+    written = errors = skipped = 0
+    done = []
+    for p in plans:
+        if not p.when or p.path.suffix.lower() not in fd.WRITABLE or (p.source == "jaar" and not year_only):
+            skipped += 1
+            continue
+        try:
+            fd.write_plan(p, backup_root)
+            written += 1
+            done.append(p)
+        except Exception as exc:
+            errors += 1
+            console.print(f"[red]{p.path.name}: {exc}[/red]")
+    if done:
+        console.print(f"Bestandsdatums nagelopen: {fd.settle_mtimes(done)} opnieuw gezet")
+    console.print(f"[green]{written} geschreven[/green], {skipped} overgeslagen (geen JPEG, alleen jaar of geen datum), {errors} fouten")
+
+
 if __name__ == "__main__":
     app()

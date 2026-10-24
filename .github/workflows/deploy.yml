@@ -120,3 +120,19 @@ jobs:
           done
           echo "::error::App reageert niet op $HOST:$APP_PORT/health"
           exit 1
+
+      - name: Oude images opruimen op Synology
+        # Na een deploy blijft de vorige versie als ongetagde image achter; die ruimen we hier op.
+        # Raakt geen containers of getagde images, en een fout hier laat de deploy niet falen.
+        continue-on-error: true
+        env:
+          PORTAINER_URL: ${{ secrets.PORTAINER_URL }}
+          PORTAINER_API_TOKEN: ${{ secrets.PORTAINER_API_TOKEN }}
+          PORTAINER_STACK_ID: ${{ secrets.PORTAINER_STACK_ID }}
+        run: |
+          [ -n "$PORTAINER_STACK_ID" ] || { echo "Geen stack, niets op te ruimen."; exit 0; }
+          ENDPOINT_ID=$(curl -s -H "X-API-Key: $PORTAINER_API_TOKEN" \
+            "$PORTAINER_URL/api/stacks/$PORTAINER_STACK_ID" | jq -r '.EndpointId')
+          curl -s -m 300 -X POST -H "X-API-Key: $PORTAINER_API_TOKEN" \
+            "$PORTAINER_URL/api/endpoints/$ENDPOINT_ID/docker/images/prune?filters=%7B%22dangling%22%3A%5B%22true%22%5D%7D" \
+            | jq '{verwijderd: ((.ImagesDeleted // []) | length), vrijgemaakt_MB: ((.SpaceReclaimed // 0) / 1000000 | floor), message}'

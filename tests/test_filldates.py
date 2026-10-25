@@ -186,3 +186,13 @@ def test_unknown_bytes_are_not_written(tmp_path):
     assert fd.file_kind(junk) == "onbekend" and not fd.can_write(junk)
     with pytest.raises(RuntimeError):
         fd.write_plan(fd.Plan(junk, datetime(2018, 7, 27, 12, 0), "bestandsnaam"), tmp_path / "bk")
+
+
+@pytest.mark.skipif(_shutil.which("exiftool") is None, reason="exiftool niet geïnstalleerd")
+def test_tiff_date_is_read_back(tmp_path):
+    photo = tmp_path / "2010" / "vakantie_2010-08-30_miami.tif"
+    photo.parent.mkdir(parents=True)
+    Image.new("RGB", (32, 24), (9, 99, 199)).save(photo, format="TIFF")
+    assert fd.exif_date(photo) is None
+    fd.write_plan(fd.Plan(photo, datetime(2010, 8, 30, 12, 0), "bestandsnaam"), tmp_path / "bk")
+    assert fd.exif_date(photo) == "2010:08:30 12:00:00"

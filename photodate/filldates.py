@@ -74,21 +74,31 @@ class Plan:
     note: str = ""
 
 
+def _valid_stamp(value) -> Optional[str]:
+    if isinstance(value, bytes):
+        value = value.decode(errors="ignore")
+    value = (value or "").strip()
+    return value if re.match(r"^\d{4}:\d{2}:\d{2}", value) and not value.startswith("0000") else None
+
+
 def exif_date(path: Path) -> Optional[str]:
     try:
         if file_kind(path) == "jpeg":
             exif = piexif.load(str(path))
         else:
-            raw = Image.open(path).info.get("exif")
-            if not raw:
-                return None
+            with Image.open(path) as im:
+                raw = im.info.get("exif")
+                if not raw:
+                    # TIFF keeps EXIF in its own IFDs instead of an "exif" blob.
+                    tags = im.getexif()
+                    sub = tags.get_ifd(0x8769)
+                    return _valid_stamp(sub.get(36867)) or _valid_stamp(sub.get(36868)) or _valid_stamp(tags.get(306))
             exif = piexif.load(raw)
     except Exception:
         return None
     for ifd, tag in (("Exif", piexif.ExifIFD.DateTimeOriginal), ("Exif", piexif.ExifIFD.DateTimeDigitized),
                      ("0th", piexif.ImageIFD.DateTime)):
-        value = (exif.get(ifd, {}).get(tag) or b"").decode(errors="ignore").strip()
-        if re.match(r"^\d{4}:\d{2}:\d{2}", value) and not value.startswith("0000"):
+        if (value := _valid_stamp(exif.get(ifd, {}).get(tag))):
             return value
     return None
 

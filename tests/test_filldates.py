@@ -196,3 +196,21 @@ def test_tiff_date_is_read_back(tmp_path):
     assert fd.exif_date(photo) is None
     fd.write_plan(fd.Plan(photo, datetime(2010, 8, 30, 12, 0), "bestandsnaam"), tmp_path / "bk")
     assert fd.exif_date(photo) == "2010:08:30 12:00:00"
+
+
+def test_human_dates_in_names():
+    assert fd.human_name_date("Echo23 12-08-2010.jpg") == datetime(2010, 8, 12, 12, 0)
+    assert fd.human_name_date("verjaardag 3.5.1998.jpg") == datetime(1998, 5, 3, 12, 0)
+    assert fd.human_name_date("IMG_20190612_153012.jpg") is None
+    assert fd.human_name_date("2018-02-03_abc.jpg") is None
+    assert fd.human_name_date("31-02-2010.jpg") is None
+    assert fd.human_name_date("1.2.3.2010.jpg") is None
+
+
+def test_typed_name_date_beats_takeout(tmp_path):
+    folder = tmp_path / "2010" / "09"
+    _jpg(folder / "Echo23 12-08-2010.jpg")
+    _sidecar(folder / "Echo23 12-08-2010.jpg.json", 1284903578)  # 19-9-2010, upload
+    plan = {p.path.name: p for p in fd.plan_folder(tmp_path / "2010", workers=2)}["Echo23 12-08-2010.jpg"]
+    assert plan.source == "bestandsnaam"
+    assert plan.when == datetime(2010, 8, 12, 12, 0)

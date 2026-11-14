@@ -58,6 +58,10 @@ def can_write(path: Path) -> bool:
 SKIP_DIRS = {"@eaDir", "#recycle", ".git", "nietzelfgenomen"}
 FIRST_YEAR = 1990
 
+# Typed by a person, Dutch order: "Echo23 12-08-2010.jpg", "verjaardag 3.5.1998.jpg".
+HUMAN_DATE_RE = re.compile(
+    r"(?<![\d.-])(0?[1-9]|[12]\d|3[01])[-.](0?[1-9]|1[0-2])[-.](19[89]\d|20[0-4]\d)(?![\d.-])"
+)
 NAME_DATE_RE = re.compile(
     r"(?<!\d)(19[89]\d|20[0-4]\d)[-_.]?(0[1-9]|1[0-2])[-_.]?(0[1-9]|[12]\d|3[01])"
     r"(?:[-_ .T]?([01]\d|2[0-3])[-_.:]?([0-5]\d)[-_.:]?([0-5]\d))?(?!\d)"
@@ -147,6 +151,17 @@ def takeout_time(sidecar: Path) -> Optional[datetime]:
     return datetime.fromtimestamp(ts, timezone.utc).astimezone(LOCAL_TZ).replace(tzinfo=None)
 
 
+def human_name_date(name: str) -> Optional[datetime]:
+    for m in HUMAN_DATE_RE.finditer(os.path.splitext(name)[0]):
+        try:
+            dt = datetime(int(m.group(3)), int(m.group(2)), int(m.group(1)), 12, 0)
+        except ValueError:
+            continue
+        if dt <= datetime.now():
+            return dt
+    return None
+
+
 def name_time(name: str) -> Optional[datetime]:
     for m in NAME_DATE_RE.finditer(name):
         y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
@@ -182,6 +197,9 @@ def same_picture(copy: Path, original: Path) -> bool:
 def plan_photo(path: Path, jsons: dict[str, Path],
                originals: Optional[dict[str, tuple[datetime, Path]]] = None) -> Plan:
     year, month = folder_month(path)
+    # A date someone typed into the name beats Takeout, which for scans is often the upload date.
+    if (dt := human_name_date(path.name)):
+        return Plan(path, dt, "bestandsnaam")
     side = sidecar_for(path, jsons)
     if side and (dt := takeout_time(side)):
         return Plan(path, dt, "takeout")
